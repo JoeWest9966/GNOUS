@@ -22,8 +22,11 @@
 - 主机名 / 会话 / 运行时长 / 时钟，CPU、内存、根分区、网络四项指标，每秒从 procfs·sysfs 重新采样。
 - 扩展列表来自真实安装目录；点击行打开右侧详情面板（描述、版本、来源、支持的
   GNOME 版本、有无首选项），面板内按钮启用/禁用，写回 gsettings。
+- 右侧快捷开关也是真数据：深色界面（`color-scheme`）、勿扰（`show-banners` 反向）、
+  性能模式（`powerprofilesctl`）、夜间色温（`night-light-enabled`）；系统没有对应
+  schema / 命令的开关会显示为不可用并说明原因，而不是假装有个值。
 
-其余区块（快捷开关、进程、启动器）仍是静态占位。
+其余区块（进程表、启动器）仍是静态占位。
 
 ![GNOUS 渲染](docs/gnous.png)
 
@@ -41,6 +44,7 @@ src/
 ├── main.rs    # 窗口、图标栏、顶栏、概览各区块的布局
 ├── sys.rs     # 只读系统采样（procfs / sysfs + statvfs），输出一帧 Snapshot
 ├── ext.rs     # 扩展清单：Provider 抽象 + 文件/gsettings 默认后端
+├── toggles.rs # 右侧快捷开关：gsettings bool/choice 与外部命令，缺失即置灰
 ├── theme.rs   # 设计 token（颜色 / 字体 / 字距 / 行高）与文本辅助函数
 └── icons.rs   # 内联 SVG 线性图标（stroke 1.3，与 demo 完全一致）
 ```

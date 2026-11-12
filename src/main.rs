@@ -2,6 +2,7 @@ mod ext;
 mod icons;
 mod sys;
 mod theme;
+mod toggles;
 
 use std::time::{Duration, Instant};
 
@@ -31,6 +32,8 @@ struct App {
     snap: sys::Snapshot,
     provider: ext::FilesystemProvider,
     extensions: Vec<ext::Extension>,
+    toggles: toggles::Toggles,
+    switches: Vec<toggles::Toggle>,
     /// UUID of the extension whose details are open in the right panel.
     selected: Option<String>,
     /// Last provider failure, shown inside the detail panel.
@@ -50,6 +53,8 @@ impl App {
         let snap = probe.sample();
         let provider = ext::FilesystemProvider::discover();
         let extensions = provider.list();
+        let toggles = toggles::Toggles::new();
+        let switches = toggles.read();
         // Sampling runs on the UI thread: every probe is a procfs/sysfs read,
         // so a tick costs microseconds and never races the render.
         cx.spawn(async move |this, cx| {
@@ -64,6 +69,7 @@ impl App {
                         if rescan {
                             app.provider.reload();
                             app.extensions = app.provider.list();
+                            app.switches = app.toggles.read();
                         }
                         cx.notify();
                     })
@@ -79,6 +85,8 @@ impl App {
             snap,
             provider,
             extensions,
+            toggles,
+            switches,
             selected: None,
             error: None,
             last_click: None,
@@ -94,6 +102,14 @@ impl App {
             Some(uuid.to_string())
         };
         self.error = None;
+        cx.notify();
+    }
+
+    /// Flip a right-column switch and re-read all of them, so the UI shows
+    /// what the system accepted rather than what we asked for.
+    fn toggle_switch(&mut self, id: &str, on: bool, cx: &mut Context<Self>) {
+        self.error = self.toggles.set(id, on).err();
+        self.switches = self.toggles.read();
         cx.notify();
     }
 
@@ -131,10 +147,13 @@ impl Render for App {
                     .min_h_0()
                     .child(self.topbar(cx))
                     .child(content(
-                        &self.snap,
-                        &self.extensions,
-                        self.selected.as_deref(),
-                        self.error.as_deref(),
+                        &Overview {
+                            snap: &self.snap,
+                            extensions: &self.extensions,
+                            switches: &self.switches,
+                            selected: self.selected.as_deref(),
+                            error: self.error.as_deref(),
+                        },
                         cx,
                     )),
             )
@@ -361,13 +380,17 @@ fn nav_item(label: &str, active: bool) -> Div {
 // Scrollable content
 // ============================================================================
 
-fn content(
-    snap: &sys::Snapshot,
-    extensions: &[ext::Extension],
-    selected: Option<&str>,
-    error: Option<&str>,
-    cx: &mut Context<App>,
-) -> impl IntoElement {
+/// Everything the overview needs for one frame, so layout helpers take one
+/// argument instead of six.
+struct Overview<'a> {
+    snap: &'a sys::Snapshot,
+    extensions: &'a [ext::Extension],
+    switches: &'a [toggles::Toggle],
+    selected: Option<&'a str>,
+    error: Option<&'a str>,
+}
+
+fn content(overview: &Overview, cx: &mut Context<App>) -> impl IntoElement {
     let weak = cx.entity().downgrade();
     v().id("content")
         .flex_1()
@@ -377,13 +400,13 @@ fn content(
         .pr(px(52.))
         .pt(px(52.))
         .pb(px(64.))
-        .child(hero(snap))
-        .child(metrics(snap))
+        .child(hero(overview.snap))
+        .child(metrics(overview.snap))
         .child(section_head(
             "扩展与开关",
-            &format!("管理全部 {} 项 →", extensions.len()),
+            &format!("管理全部 {} 项 →", overview.extensions.len()),
         ))
-        .child(panels(extensions, selected, error, &weak))
+        .child(panels(overview, &weak))
         .child(section_head("资源热点", "打开任务管理器 →"))
         .child(processes())
         .child(section_head("启动器 · 常用", "编辑布局 →"))
@@ -573,13 +596,10 @@ fn section_head(title: &str, link: &str) -> Div {
 // Extensions + quick toggles
 // ============================================================================
 
-fn panels(
-    extensions: &[ext::Extension],
-    selected: Option<&str>,
-    error: Option<&str>,
-    weak: &WeakEntity<App>,
-) -> Div {
-    let detail = selected.and_then(|uuid| extensions.iter().find(|e| e.uuid == uuid));
+fn panels(overview: &Overview, weak: &WeakEntity<App>) -> Div {
+    let detail = overview
+        .selected
+        .and_then(|uuid| overview.extensions.iter().find(|e| e.uuid == uuid));
     h().items_stretch()
         .gap(px(1.))
         .bg(line())
@@ -593,45 +613,104 @@ fn panels(
                 .pt(px(30.))
                 .pb(px(30.))
                 .px(px(28.))
-                .children(ext_rows(extensions, selected, weak)),
+                .children(ext_rows(overview.extensions, overview.selected, weak)),
         )
         .child(match detail {
-            Some(extension) => details(extension, error, weak),
-            None => quick_toggles(),
+            Some(extension) => details(extension, overview.error, weak),
+            None => quick_toggles(overview, weak),
         })
 }
 
-/// Right-hand panel when nothing is selected: the demo's static toggles.
-fn quick_toggles() -> Div {
+/// Right-hand panel when nothing is selected: the real system switches.
+fn quick_toggles(overview: &Overview, weak: &WeakEntity<App>) -> Div {
+    let last = overview.switches.len().saturating_sub(1);
     v().flex_1()
         .min_w_0()
         .bg(black())
         .pt(px(30.))
         .pb(px(30.))
         .px(px(28.))
-        .child(toggle_row(0, "深色界面", "Prefer dark · 全局", true, false))
-        .child(toggle_row(1, "勿扰模式", "屏蔽全部通知", false, false))
-        .child(toggle_row(
-            2,
-            "性能模式",
-            "CPU 调度器 → performance",
-            false,
-            false,
-        ))
-        .child(toggle_row(
-            3,
-            "夜间色温",
-            "22:00 – 07:00 · 3400K",
-            true,
-            false,
-        ))
-        .child(toggle_row(
-            4,
-            "自动平铺",
-            "窗口管理 · Pop Shell",
-            true,
-            true,
-        ))
+        .children(
+            overview
+                .switches
+                .iter()
+                .enumerate()
+                .map(|(index, toggle)| toggle_row(index, toggle, index == last, weak)),
+        )
+        .when_some(overview.error, |this, error| {
+            this.child(txt(error.to_string(), 10.5, FontWeight::NORMAL, warn()).mt(px(14.)))
+        })
+}
+
+fn toggle_row(
+    index: usize,
+    toggle: &toggles::Toggle,
+    last: bool,
+    weak: &WeakEntity<App>,
+) -> Stateful<Div> {
+    let (on, available, id) = (toggle.on, toggle.available, toggle.id);
+    let title_color = if available { text() } else { muted() };
+    let weak = weak.clone();
+    h().items_center()
+        .id(("toggle", index))
+        .justify_between()
+        .py(px(16.))
+        .when(!last, |this| this.border_b(px(1.)).border_color(line()))
+        .when(available, |this| {
+            this.cursor_pointer()
+                .hover(|this| this.bg(alpha(0xffffff0a)))
+                .on_click(move |_, _, cx| {
+                    let _ = weak.update(cx, |app, cx| app.toggle_switch(id, !on, cx));
+                })
+        })
+        .child(
+            v().child(txt(toggle.title, 13., FontWeight::NORMAL, title_color))
+                .child(txt(toggle.description.clone(), 11., FontWeight::NORMAL, dim()).mt(px(4.))),
+        )
+        .child(switch(on, available))
+}
+
+fn switch(on: bool, available: bool) -> impl IntoElement {
+    let border = if !available {
+        line()
+    } else if on {
+        alpha(0xffffff8c)
+    } else {
+        line_strong()
+    };
+    let fill = if !available {
+        alpha(0xffffff03)
+    } else if on {
+        alpha(0xffffff14)
+    } else {
+        alpha(0xffffff05)
+    };
+    let knob = if !available {
+        dim()
+    } else if on {
+        text()
+    } else {
+        muted()
+    };
+    div()
+        .relative()
+        .w(px(46.))
+        .h(px(22.))
+        .flex_shrink_0()
+        .rounded_full()
+        .border(px(1.))
+        .border_color(border)
+        .bg(fill)
+        .child(
+            div()
+                .absolute()
+                .top(px(3.))
+                .left(px(if on { 27. } else { 3. }))
+                .w(px(14.))
+                .h(px(14.))
+                .rounded_full()
+                .bg(knob),
+        )
 }
 
 /// Detail panel: what the extension is, where it came from, and its switch.
@@ -825,45 +904,6 @@ fn ext_row(
                 ),
         )
         .child(caps(status, 9.5, FontWeight::NORMAL, status_color, 0.18))
-}
-
-fn toggle_row(index: usize, title: &str, desc: &str, on: bool, last: bool) -> Div {
-    h().items_center()
-        .justify_between()
-        .py(px(16.))
-        .when(!last, |this| this.border_b(px(1.)).border_color(line()))
-        .child(
-            v().child(txt(title, 13., FontWeight::NORMAL, text()))
-                .child(txt(desc, 11., FontWeight::NORMAL, dim()).mt(px(4.))),
-        )
-        .child(switch(index, on))
-}
-
-fn switch(id: usize, on: bool) -> impl IntoElement {
-    div()
-        .id(("switch", id))
-        .relative()
-        .w(px(46.))
-        .h(px(22.))
-        .flex_shrink_0()
-        .rounded_full()
-        .border(px(1.))
-        .border_color(if on { alpha(0xffffff8c) } else { line_strong() })
-        .bg(if on {
-            alpha(0xffffff14)
-        } else {
-            alpha(0xffffff05)
-        })
-        .child(
-            div()
-                .absolute()
-                .top(px(3.))
-                .left(px(if on { 27. } else { 3. }))
-                .w(px(14.))
-                .h(px(14.))
-                .rounded_full()
-                .bg(if on { text() } else { muted() }),
-        )
 }
 
 // ============================================================================
