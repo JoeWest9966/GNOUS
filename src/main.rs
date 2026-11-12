@@ -31,6 +31,10 @@ struct App {
     snap: sys::Snapshot,
     provider: ext::FilesystemProvider,
     extensions: Vec<ext::Extension>,
+    /// UUID of the extension whose details are open in the right panel.
+    selected: Option<String>,
+    /// Last provider failure, shown inside the detail panel.
+    error: Option<String>,
     last_click: Option<Instant>,
     drag_anchor: Option<Point<gpui_kit::Pixels>>,
 }
@@ -75,18 +79,37 @@ impl App {
             snap,
             provider,
             extensions,
+            selected: None,
+            error: None,
             last_click: None,
             drag_anchor: None,
         }
     }
 
+    /// Open the detail panel for `uuid`, or close it when it is already open.
+    fn select_extension(&mut self, uuid: &str, cx: &mut Context<Self>) {
+        self.selected = if self.selected.as_deref() == Some(uuid) {
+            None
+        } else {
+            Some(uuid.to_string())
+        };
+        self.error = None;
+        cx.notify();
+    }
+
+    fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        self.selected = None;
+        self.error = None;
+        cx.notify();
+    }
+
     /// Flip an extension through the active provider, then re-read the
     /// inventory so the row reflects what the system actually accepted.
     fn toggle_extension(&mut self, uuid: &str, enabled: bool, cx: &mut Context<Self>) {
-        if let Err(error) = self.provider.set_enabled(uuid, enabled) {
-            eprintln!("gnous: 切换扩展 {uuid} 失败: {error}");
-            return;
-        }
+        self.error = match self.provider.set_enabled(uuid, enabled) {
+            Ok(()) => None,
+            Err(error) => Some(error),
+        };
         self.provider.reload();
         self.extensions = self.provider.list();
         cx.notify();
@@ -107,7 +130,13 @@ impl Render for App {
                     .min_w_0()
                     .min_h_0()
                     .child(self.topbar(cx))
-                    .child(content(&self.snap, &self.extensions, cx)),
+                    .child(content(
+                        &self.snap,
+                        &self.extensions,
+                        self.selected.as_deref(),
+                        self.error.as_deref(),
+                        cx,
+                    )),
             )
             .child(resize_grips())
     }
@@ -335,6 +364,8 @@ fn nav_item(label: &str, active: bool) -> Div {
 fn content(
     snap: &sys::Snapshot,
     extensions: &[ext::Extension],
+    selected: Option<&str>,
+    error: Option<&str>,
     cx: &mut Context<App>,
 ) -> impl IntoElement {
     let weak = cx.entity().downgrade();
@@ -352,7 +383,7 @@ fn content(
             "扩展与开关",
             &format!("管理全部 {} 项 →", extensions.len()),
         ))
-        .child(panels(extensions, &weak))
+        .child(panels(extensions, selected, error, &weak))
         .child(section_head("资源热点", "打开任务管理器 →"))
         .child(processes())
         .child(section_head("启动器 · 常用", "编辑布局 →"))
@@ -385,7 +416,7 @@ fn hero(snap: &sys::Snapshot) -> Div {
         )
 }
 
-fn button(label: &'static str, solid: bool) -> impl IntoElement {
+fn button(label: &'static str, solid: bool) -> Stateful<Div> {
     let (bg, border, fg) = if solid {
         (accent(), accent(), white())
     } else {
@@ -542,7 +573,13 @@ fn section_head(title: &str, link: &str) -> Div {
 // Extensions + quick toggles
 // ============================================================================
 
-fn panels(extensions: &[ext::Extension], weak: &WeakEntity<App>) -> Div {
+fn panels(
+    extensions: &[ext::Extension],
+    selected: Option<&str>,
+    error: Option<&str>,
+    weak: &WeakEntity<App>,
+) -> Div {
+    let detail = selected.and_then(|uuid| extensions.iter().find(|e| e.uuid == uuid));
     h().items_stretch()
         .gap(px(1.))
         .bg(line())
@@ -556,43 +593,145 @@ fn panels(extensions: &[ext::Extension], weak: &WeakEntity<App>) -> Div {
                 .pt(px(30.))
                 .pb(px(30.))
                 .px(px(28.))
-                .children(ext_rows(extensions, weak)),
+                .children(ext_rows(extensions, selected, weak)),
+        )
+        .child(match detail {
+            Some(extension) => details(extension, error, weak),
+            None => quick_toggles(),
+        })
+}
+
+/// Right-hand panel when nothing is selected: the demo's static toggles.
+fn quick_toggles() -> Div {
+    v().flex_1()
+        .min_w_0()
+        .bg(black())
+        .pt(px(30.))
+        .pb(px(30.))
+        .px(px(28.))
+        .child(toggle_row(0, "深色界面", "Prefer dark · 全局", true, false))
+        .child(toggle_row(1, "勿扰模式", "屏蔽全部通知", false, false))
+        .child(toggle_row(
+            2,
+            "性能模式",
+            "CPU 调度器 → performance",
+            false,
+            false,
+        ))
+        .child(toggle_row(
+            3,
+            "夜间色温",
+            "22:00 – 07:00 · 3400K",
+            true,
+            false,
+        ))
+        .child(toggle_row(
+            4,
+            "自动平铺",
+            "窗口管理 · Pop Shell",
+            true,
+            true,
+        ))
+}
+
+/// Detail panel: what the extension is, where it came from, and its switch.
+fn details(extension: &ext::Extension, error: Option<&str>, weak: &WeakEntity<App>) -> Div {
+    let (_, enabled) = extension.status();
+    let (uuid, want) = (extension.uuid.clone(), !enabled);
+    let toggle_weak = weak.clone();
+    let close_weak = weak.clone();
+    let description = if extension.description.trim().is_empty() {
+        "这个扩展没有提供描述。".to_string()
+    } else {
+        extension.description.clone()
+    };
+    let shell_versions = if extension.shell_versions.is_empty() {
+        "—".to_string()
+    } else {
+        extension.shell_versions.join(" · ")
+    };
+    let version = if extension.version.is_empty() {
+        "—".to_string()
+    } else {
+        format!("v{}", extension.version)
+    };
+    let preferences = if extension.has_prefs { "有" } else { "无" };
+
+    v().flex_1()
+        .min_w_0()
+        .bg(black())
+        .pt(px(30.))
+        .pb(px(30.))
+        .px(px(28.))
+        .child(
+            h().items_center()
+                .justify_between()
+                .child(caps("扩展详情", 10.5, FontWeight::NORMAL, dim(), 0.22))
+                .child(
+                    div()
+                        .id("detail-close")
+                        .cursor_pointer()
+                        .child(caps("关闭", 10., FontWeight::NORMAL, dim(), 0.14))
+                        .hover(|this| this.text_color(text()))
+                        .on_click(move |_, _, cx| {
+                            let _ = close_weak.update(cx, |app, cx| app.clear_selection(cx));
+                        }),
+                ),
         )
         .child(
-            v().flex_1()
-                .min_w_0()
-                .bg(black())
-                .pt(px(30.))
-                .pb(px(30.))
-                .px(px(28.))
-                .child(toggle_row(0, "深色界面", "Prefer dark · 全局", true, false))
-                .child(toggle_row(1, "勿扰模式", "屏蔽全部通知", false, false))
-                .child(toggle_row(
-                    2,
-                    "性能模式",
-                    "CPU 调度器 → performance",
-                    false,
-                    false,
-                ))
-                .child(toggle_row(
-                    3,
-                    "夜间色温",
-                    "22:00 – 07:00 · 3400K",
-                    true,
-                    false,
-                ))
-                .child(toggle_row(
-                    4,
-                    "自动平铺",
-                    "窗口管理 · Pop Shell",
-                    true,
-                    true,
-                )),
+            txt(extension.name.clone(), 21., FontWeight::LIGHT, text())
+                .line_height(px(26.))
+                .mt(px(16.)),
+        )
+        .child(txt(extension.uuid.clone(), 10.5, FontWeight::NORMAL, dim()).mt(px(4.)))
+        .child(div().h(px(1.)).w_full().bg(line()).mt(px(18.)).mb(px(18.)))
+        .child(
+            txt(description, 12., FontWeight::NORMAL, muted())
+                .line_height(px(19.))
+                .mb(px(18.)),
+        )
+        .child(info_row("版本", version))
+        .child(info_row("来源", extension.origin.label().to_string()))
+        .child(info_row("支持 GNOME", shell_versions))
+        .child(info_row("首选项", preferences.to_string()))
+        .when_some(error, |this, error| {
+            this.child(txt(error.to_string(), 10.5, FontWeight::NORMAL, warn()).mt(px(14.)))
+        })
+        .child(
+            button(
+                if enabled {
+                    "禁用扩展"
+                } else {
+                    "启用扩展"
+                },
+                !enabled,
+            )
+            .mt(px(24.))
+            .on_click(move |_, _, cx| {
+                let uuid = uuid.clone();
+                let _ = toggle_weak.update(cx, |app, cx| {
+                    app.toggle_extension(&uuid, want, cx);
+                });
+            }),
         )
 }
 
+fn info_row(label: &str, value: String) -> Div {
+    h().items_center()
+        .justify_between()
+        .py(px(8.))
+        .border_b(px(1.))
+        .border_color(line_faint())
+        .child(caps(label, 9.5, FontWeight::NORMAL, dim(), 0.2))
+        .child(txt(value, 11.5, FontWeight::NORMAL, text()))
+}
+
 /// Rows for the extension panel, or a hint when the machine has none.
-fn ext_rows(extensions: &[ext::Extension], weak: &WeakEntity<App>) -> Vec<Stateful<Div>> {
+fn ext_rows(
+    extensions: &[ext::Extension],
+    selected: Option<&str>,
+    weak: &WeakEntity<App>,
+) -> Vec<Stateful<Div>> {
     if extensions.is_empty() {
         return vec![empty_extensions()];
     }
@@ -600,7 +739,10 @@ fn ext_rows(extensions: &[ext::Extension], weak: &WeakEntity<App>) -> Vec<Statef
     extensions
         .iter()
         .enumerate()
-        .map(|(index, extension)| ext_row(index, index == last, extension, weak))
+        .map(|(index, extension)| {
+            let open = selected == Some(extension.uuid.as_str());
+            ext_row(index, index == last, extension, open, weak)
+        })
         .collect()
 }
 
@@ -626,21 +768,34 @@ fn ext_row(
     index: usize,
     last: bool,
     extension: &ext::Extension,
+    open: bool,
     weak: &WeakEntity<App>,
 ) -> Stateful<Div> {
     let (status, enabled) = extension.status();
     let status_color = if enabled { ok() } else { dim() };
-    let (uuid, want) = (extension.uuid.clone(), !enabled);
+    let uuid = extension.uuid.clone();
     let weak = weak.clone();
-    h().items_center()
+    h().relative()
+        .items_center()
         .id(("ext", index))
         .cursor_pointer()
         .gap(px(16.))
         .py(px(15.))
+        .when(open, |this| {
+            this.bg(alpha(0xffffff0a)).child(
+                div()
+                    .absolute()
+                    .left(px(-28.))
+                    .top(px(10.))
+                    .bottom(px(10.))
+                    .w(px(2.))
+                    .bg(accent()),
+            )
+        })
         .hover(|this| this.bg(surface_2()))
         .on_click(move |_, _, cx| {
             let uuid = uuid.clone();
-            let _ = weak.update(cx, |app, cx| app.toggle_extension(&uuid, want, cx));
+            let _ = weak.update(cx, |app, cx| app.select_extension(&uuid, cx));
         })
         .when(!last, |this| this.border_b(px(1.)).border_color(line()))
         .child(
