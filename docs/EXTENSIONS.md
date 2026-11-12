@@ -40,8 +40,17 @@ version = "0.1.0"
 icon = "layout-dashboard"     # 复用 gpui-kit 图标名，或自定义 svg 资源路径
 capabilities = ["settings"]   # "settings" | "page"，可同时具备
 
-# 仅页面级扩展需要：左栏入口
+# 仅页面级扩展需要：某分区下的页面入口（section 缺省为 overview）
 nav = { label = "Dock", order = 30 }
+
+# 页面级扩展还可以声明多个视图，每个视图成为顶栏的一个 tab
+[[views]]
+id = "table"
+label = "Table"
+
+[[views]]
+id = "live"
+label = "Live"
 
 # 声明式配置：界面据此自动生成表单
 [settings.position]
@@ -69,8 +78,21 @@ default = true
 
 ## 注册方式
 
-- **编译期静态注册**（推荐）：扩展是本 workspace 的 crate，在 `extensions/registry.rs` 中登记 manifest 与页面构造函数。避免 dylib ABI 问题，跨平台一致。
-- 运行时列表 = 内置 registry + 系统已装的 GNOME 扩展（走现有的 provider 抽象），两者在列表页里统一呈现，来源用一个小标签区分。
+- **编译期静态注册**（现行）：manifest 通过 `include_str!` 编入 `src/registry.rs` 的 `MANIFESTS`，
+  页面渲染器是 `src/pages/<id>.rs` 里的普通 Rust 函数。没有 dylib、没有 ABI 问题。
+- manifest 是唯一事实来源：顶栏 tab 的标签、顺序、所属分区都来自它，核心代码里不出现
+  具体扩展的名字（`content()` 只按 `plugin:view` 分派）。
+- 运行时列表 = 内置 registry + 系统已装的 GNOME 扩展（走现有的 `ext::Provider` 抽象），
+  两者在列表页里统一呈现，来源用一个小标签区分。
+
+### 现状
+
+| 扩展 | 层级 | 入口 |
+| --- | --- | --- |
+| `processes` | 页面级 | Overview 分区下的 5 个视图：Table / Live / Memory / Tree / Groups |
+
+新增页面级扩展的完整链路：`extensions/<id>/manifest.toml` → `MANIFESTS` 登记 →
+`src/pages/<id>.rs` 实现 `body()` → `src/pages/mod.rs` 导出。
 
 ## 新建扩展的流程（重要）
 
@@ -81,5 +103,7 @@ default = true
 ## 待定
 
 - schema 格式最终用 TOML 还是 JSON（需兼顾运行时解析与手写体验）
-- 页面级扩展的状态保持与生命周期（切页后是否保留后台任务）
+- 是否为扩展拆出 cargo workspace（现在是同 crate 模块；拆了能隔离编译，但要把
+  `theme` / `sys` / `proc` 等基础层下沉成 lib）
+- 页面级扩展的状态保持与生命周期（切页后是否保留后台任务；目前进程采样只在进程页活跃时进行）
 - 与现有 extensions provider 抽象如何合并：系统扩展走 provider，自研扩展走 registry，列表层统一

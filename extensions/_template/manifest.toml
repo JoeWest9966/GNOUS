@@ -9,7 +9,12 @@ icon = "puzzle"               # gpui-kit 图标名，或 assets 里的 svg 路�
 capabilities = ["settings"]   # "settings" 通用接入；"page" 额外注册左栏页面
 
 # 仅 capabilities 含 "page" 时需要
-# nav = { label = "示例", order = 90 }
+# nav = { label = "示例", order = 90 }   # section 缺省为 overview
+
+# 页面级扩展可以声明多个视图，每个视图是顶栏的一个 tab
+# [[views]]
+# id = "overview"
+# label = "Overview"
 
 [settings.demo_toggle]
 type = "bool"

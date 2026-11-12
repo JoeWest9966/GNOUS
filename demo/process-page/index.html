@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GNOUS · 进程页选型</title>
+<style>
+  :root{
+    --bg:#08090A;--card:#111214;--line:rgba(255,255,255,.08);
+    --text:#F0F1F3;--muted:#7E848E;--dim:#4C5259;--red:#E31937;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--bg);color:var(--text);
+    font-family:"Helvetica Neue",Inter,system-ui,"Noto Sans SC",sans-serif;
+    -webkit-font-smoothing:antialiased;min-height:100vh;padding:60px 40px 80px;
+  }
+  .wrap{max-width:1180px;margin:0 auto}
+  .top{margin-bottom:52px}
+  .kicker{font-size:11px;letter-spacing:.32em;text-transform:uppercase;color:var(--dim);margin-bottom:18px}
+  h1{font-size:clamp(32px,4vw,46px);font-weight:200;letter-spacing:-.025em}
+  .top p{color:var(--muted);font-size:14px;line-height:1.7;margin-top:16px;max-width:620px}
+  .hint{display:inline-flex;align-items:center;gap:8px;margin-top:22px;font-size:11.5px;color:var(--muted);border:1px solid var(--line);border-radius:100px;padding:7px 15px;letter-spacing:.02em}
+  .hint b{color:var(--red);font-weight:500}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:18px}
+  a.card{display:block;text-decoration:none;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden;transition:transform .22s,border-color .22s,box-shadow .22s}
+  a.card:hover{transform:translateY(-3px);border-color:rgba(255,255,255,.2);box-shadow:0 20px 60px rgba(0,0,0,.5)}
+  .thumb{height:210px;position:relative;overflow:hidden;border-bottom:1px solid var(--line);background:#000}
+  .thumb .tag{position:absolute;top:14px;left:14px;z-index:3;font-size:10px;letter-spacing:.18em;text-transform:uppercase;background:rgba(0,0,0,.55);backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.14);padding:5px 10px;border-radius:4px;color:#fff}
+  .mini{position:absolute;inset:0;padding:18px;display:flex;flex-direction:column;gap:7px}
+
+  /* A dense table */
+  .tA .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+  .tA .head b{height:8px;width:64px;background:rgba(255,255,255,.85);border-radius:1px;display:block}
+  .tA .head span{display:flex;gap:4px}
+  .tA .head span i{display:block;width:26px;height:14px;border:1px solid rgba(255,255,255,.16);border-radius:2px}
+  .tA .sum{display:flex;gap:10px;border-top:1px solid rgba(255,255,255,.08);border-bottom:1px solid rgba(255,255,255,.08);padding:8px 0;margin-bottom:6px}
+  .tA .sum i{flex:1;display:block;height:14px;background:rgba(255,255,255,.22);border-radius:1px;max-width:60%}
+  .tA .row{display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+  .tA .row .nm{height:6px;background:rgba(255,255,255,.6);border-radius:1px}
+  .tA .row .sp{margin-left:auto;height:10px;width:44px;border-bottom:1px solid rgba(255,255,255,.25);position:relative}
+  .tA .row .sp::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent 0,rgba(255,255,255,.5) 20%,transparent 40%,rgba(255,255,255,.5) 60%,transparent 80%);clip-path:polygon(0 80%,20% 50%,40% 70%,60% 20%,80% 40%,100% 10%,100% 100%,0 100%);opacity:.35}
+
+  /* B live stream */
+  .tB .chart{position:relative;height:84px;margin-top:2px}
+  .tB .chart svg{width:100%;height:100%;display:block}
+  .tB .bars{display:flex;flex-direction:column;gap:7px;margin-top:6px}
+  .tB .bars div{display:flex;align-items:center;gap:8px}
+  .tB .bars b{height:5px;width:52px;background:rgba(255,255,255,.5);border-radius:1px;flex:0 0 auto}
+  .tB .bars i{height:1px;background:rgba(255,255,255,.12);flex:1;position:relative}
+  .tB .bars i em{position:absolute;left:0;top:-1px;height:3px;background:#fff;display:block}
+  .tB .bars i em.hot{background:var(--red)}
+
+  /* C memory map */
+  .tC{padding:14px}
+  .tC .map{flex:1;display:grid;grid-template-columns:2fr 1fr;grid-template-rows:1fr 1fr;gap:2px}
+  .tC .map div{background:rgba(255,255,255,.09);border:1px solid #000;display:flex;align-items:flex-start;padding:5px;font-size:6px;color:rgba(255,255,255,.55);letter-spacing:.04em}
+  .tC .map .a1{grid-row:span 2;background:rgba(227,25,55,.2);border-color:rgba(227,25,55,.5)}
+  .tC .map .a2{background:rgba(255,255,255,.14)}
+  .tC .map .a3{background:rgba(255,255,255,.06)}
+  .tC .map .a4{background:rgba(255,255,255,.03)}
+  .tC .map .a5{grid-column:span 2;background:rgba(255,255,255,.05)}
+
+  /* D tree */
+  .tD{padding:16px 18px}
+  .tD .n{display:flex;align-items:center;gap:6px;padding:4px 0;font-size:7px;color:rgba(255,255,255,.75)}
+  .tD .n i{display:block;width:5px;height:5px;background:rgba(255,255,255,.5);border-radius:1px;flex:0 0 5px}
+  .tD .n s{display:block;height:5px;background:rgba(255,255,255,.45);border-radius:1px;flex:1;max-width:70px}
+  .tD .n em{width:14px;height:1px;background:rgba(255,255,255,.16);display:block;margin-left:auto}
+  .tD .ind{margin-left:12px;padding-left:10px;border-left:1px solid rgba(255,255,255,.1)}
+  .tD .ind2{margin-left:22px;padding-left:10px;border-left:1px solid rgba(255,255,255,.07)}
+
+  /* E cards */
+  .tE{padding:14px}
+  .tE .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:2px;flex:1;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.08)}
+  .tE .c{background:#000;padding:8px;display:flex;flex-direction:column;gap:5px}
+  .tE .c .k{height:4px;width:70%;background:rgba(255,255,255,.18);border-radius:1px}
+  .tE .c .big{height:14px;width:55%;background:rgba(255,255,255,.85);border-radius:1px;margin-top:2px}
+  .tE .c .bar{height:2px;background:rgba(255,255,255,.1);position:relative}
+  .tE .c .bar em{position:absolute;left:0;top:0;height:2px;background:rgba(255,255,255,.6);display:block}
+  .tE .c .tint{position:absolute;left:0;top:0;height:2px;display:block}
+  .tE .c .li{display:flex;gap:4px;align-items:center}
+  .tE .c .li b{height:4px;background:rgba(255,255,255,.4);border-radius:1px;flex:1}
+  .tE .c .li i{height:4px;width:14px;background:rgba(255,255,255,.2);border-radius:1px}
+
+  .meta{padding:18px 20px 20px}
+  .meta .hd{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+  .meta h2{font-size:16.5px;font-weight:500;letter-spacing:-.01em}
+  .meta .en{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
+  .meta p{font-size:12.5px;color:var(--muted);line-height:1.65;margin-top:9px}
+  .meta .tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:14px}
+  .meta .tags span{font-size:10px;letter-spacing:.06em;color:var(--dim);border:1px solid var(--line);padding:4px 9px;border-radius:3px}
+  .meta .open{margin-top:16px;display:flex;align-items:center;gap:7px;font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text)}
+  .meta .open::after{content:"→";transition:transform .2s}
+  a.card:hover .open::after{transform:translateX(4px)}
+
+  footer{margin-top:60px;border-top:1px solid var(--line);padding-top:22px;display:flex;justify-content:space-between;font-size:11.5px;color:var(--dim);flex-wrap:wrap;gap:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="kicker">GNOUS · Process Page</div>
+    <h1>进程页，五种看法。</h1>
+    <p>同一个页面，回答的问题不同：谁在吃 CPU（A/B）、谁在吃内存（C）、谁拉起了谁（D）、谁属于哪个组（E）。全部纯 HTML，零依赖，双击即可打开；A / B / C / D 带少量 JS 交互（排序、实时数字、点击选中、折叠）。</p>
+    <div class="hint">当前已选定视觉方向 <b>A · Control Deck</b>，下面五种都沿用它</div>
+  </div>
+
+  <div class="grid">
+
+    <a class="card" href="a-dense-table.html">
+      <div class="thumb tA">
+        <div class="tag">A · Dense Table</div>
+        <div class="mini">
+          <div class="head"><b></b><span><i></i><i></i><i></i></span></div>
+          <div class="sum"><i></i><i></i><i></i><i></i></div>
+          <div class="row"><span class="nm" style="width:64px"></span><span class="sp"></span></div>
+          <div class="row"><span class="nm" style="width:48px"></span><span class="sp"></span></div>
+          <div class="row"><span class="nm" style="width:72px"></span><span class="sp"></span></div>
+          <div class="row"><span class="nm" style="width:38px"></span><span class="sp"></span></div>
+          <div class="row"><span class="nm" style="width:56px"></span><span class="sp"></span></div>
+        </div>
+      </div>
+      <div class="meta">
+        <div class="hd"><h2>紧凑表格</h2><span class="en">Table</span></div>
+        <p>可排序表格 + 搜索 + 全部/用户/系统过滤，行内 CPU 微条与 12 点趋势线，悬停出现"结束"。信息最全，学习成本最低。</p>
+        <div class="tags"><span>排序</span><span>过滤</span><span>趋势线</span><span>高密度</span></div>
+        <div class="open">打开预览</div>
+      </div>
+    </a>
+
+    <a class="card" href="b-live-stream.html">
+      <div class="thumb tB">
+        <div class="tag">B · Live Stream</div>
+        <div class="mini">
+          <div class="head" style="display:flex;justify-content:space-between">
+            <b style="height:8px;width:70px;background:rgba(255,255,255,.85);border-radius:1px;display:block"></b>
+            <span style="font-size:6px;letter-spacing:.2em;color:#8A8F98;border:1px solid rgba(255,255,255,.15);padding:2px 5px">LIVE</span>
+          </div>
+          <div class="chart">
+            <svg viewBox="0 0 300 84" preserveAspectRatio="none">
+              <path d="M0,60 L25,52 L50,58 L75,40 L100,46 L125,28 L150,38 L175,22 L200,30 L225,16 L250,26 L275,18 L300,22 L300,84 L0,84 Z" fill="rgba(255,255,255,.1)"/>
+              <path d="M0,60 L25,52 L50,58 L75,40 L100,46 L125,28 L150,38 L175,22 L200,30 L225,16 L250,26 L275,18 L300,22" fill="none" stroke="#fff" stroke-width="1.2"/>
+              <circle cx="300" cy="22" r="2.5" fill="#E31937"/>
+            </svg>
+          </div>
+          <div class="bars">
+            <div><b></b><i><em class="hot" style="width:82%"></em></i></div>
+            <div><b style="width:38px"></b><i><em style="width:60%"></em></i></div>
+            <div><b style="width:46px"></b><i><em class="hot" style="width:32%"></em></i></div>
+            <div><b style="width:30px"></b><i><em style="width:20%"></em></i></div>
+            <div><b style="width:42px"></b><i><em style="width:12%"></em></i></div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <div class="hd"><h2>实时曲线</h2><span class="en">Live</span></div>
+        <p>顶部 30 秒 CPU 趋势大图（每秒抖动更新），下方热进程横向条，右栏状态分布与系统摘要。最有"监控台"的感觉。</p>
+        <div class="tags"><span>折线图</span><span>每秒刷新</span><span>状态分布</span><span>监控感</span></div>
+        <div class="open">打开预览</div>
+      </div>
+    </a>
+
+    <a class="card" href="c-memory-map.html">
+      <div class="thumb tC">
+        <div class="tag">C · Memory Map</div>
+        <div class="map">
+          <div class="a1">firefox</div>
+          <div class="a2">code</div>
+          <div class="a3">shell</div>
+          <div class="a4">xwl</div>
+          <div class="a5">其余 301 个进程</div>
+        </div>
+      </div>
+      <div class="meta">
+        <div class="hd"><h2>内存地图</h2><span class="en">Treemap</span></div>
+        <p>面积即常驻内存的方块图，一眼看出谁在吃内存；点击方块右上侧显示进程详情并可直接结束。视觉最独特。</p>
+        <div class="tags"><span>Treemap</span><span>面积=内存</span><span>点击详情</span><span>视觉化</span></div>
+        <div class="open">打开预览</div>
+      </div>
+    </a>
+
+    <a class="card" href="d-process-tree.html">
+      <div class="thumb tD">
+        <div class="tag">D · Process Tree</div>
+        <div class="mini">
+          <div class="n"><i></i><s style="max-width:42px"></s><em></em></div>
+          <div class="ind">
+            <div class="n"><i></i><s style="max-width:58px"></s><em></em></div>
+            <div class="n"><i></i><s style="max-width:50px"></s><em></em></div>
+            <div class="ind2">
+              <div class="n"><i></i><s style="max-width:64px"></s><em></em></div>
+              <div class="n"><i></i><s style="max-width:44px"></s><em></em></div>
+            </div>
+            <div class="n"><i></i><s style="max-width:70px"></s><em></em></div>
+          </div>
+          <div class="n"><i></i><s style="max-width:52px"></s><em></em></div>
+        </div>
+      </div>
+      <div class="meta">
+        <div class="hd"><h2>进程树</h2><span class="en">Tree</span></div>
+        <p>按父子关系缩进展开，点击折叠，右侧显示完整命令行与子进程数。排障时最好用——能看清"这个进程是谁拉起来的"。</p>
+        <div class="tags"><span>树形</span><span>可折叠</span><span>命令行</span><span>排障</span></div>
+        <div class="open">打开预览</div>
+      </div>
+    </a>
+
+    <a class="card" href="e-grouped-cards.html">
+      <div class="thumb tE">
+        <div class="tag">E · Grouped Cards</div>
+        <div class="mini">
+          <div class="cards">
+            <div class="c"><div class="k"></div><div class="big"></div><div class="bar"><em style="width:40%"></em></div><div class="li"><b></b><i></i></div><div class="li"><b style="max-width:60%"></b><i></i></div><div class="li"><b style="max-width:46%"></b><i></i></div></div>
+            <div class="c"><div class="k"></div><div class="big" style="width:70%"></div><div class="bar"><em style="width:65%;background:#86868B"></em></div><div class="li"><b></b><i></i></div><div class="li"><b style="max-width:70%"></b><i></i></div><div class="li"><b style="max-width:52%"></b><i></i></div></div>
+            <div class="c"><div class="k"></div><div class="big" style="width:48%"></div><div class="bar"><em style="width:80%;background:#E31937"></em></div><div class="li"><b></b><i></i></div><div class="li"><b style="max-width:66%"></b><i></i></div><div class="li"><b style="max-width:40%"></b><i></i></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <div class="hd"><h2>分组卡片</h2><span class="en">Cgroup</span></div>
+        <p>按 systemd slice 分成系统/会话/应用三组，每组汇总 CPU 与内存，下方列出 top 4。回答"系统资源被哪一层吃掉了"。</p>
+        <div class="tags"><span>cgroup</span><span>三栏</span><span>汇总</span><span>层级视角</span></div>
+        <div class="open">打开预览</div>
+      </div>
+    </a>
+
+  </div>
+
+  <footer>
+    <span>GNOUS · 进程页 UI 选型 · 数据为静态假数据（asus / GNOME 48 / Wayland）</span>
+    <span>建议全屏浏览 · 1440×1000</span>
+  </footer>
+</div>
+</body>
+</html>

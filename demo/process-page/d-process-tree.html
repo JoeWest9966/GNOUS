@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GNOUS · 进程页 D Process Tree</title>
+<style>
+  :root{
+    --bg:#000000;--surface:#0A0A0B;--surface-2:#111113;
+    --line:rgba(255,255,255,.09);--line-strong:rgba(255,255,255,.18);--line-faint:rgba(255,255,255,.05);
+    --text:#F5F5F7;--muted:#86868B;--dim:#5A5A60;--accent:#E31937;--ok:#37D67A;--warn:#F5A623;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scrollbar-width:thin;scrollbar-color:#242424 transparent}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--text);font-family:"Helvetica Neue",Inter,"Segoe UI",system-ui,"Noto Sans SC",sans-serif;-webkit-font-smoothing:antialiased;font-feature-settings:"tnum";overflow:hidden}
+  .app{display:grid;grid-template-columns:68px 1fr;height:100vh}
+
+  .rail{border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:22px 0;gap:6px}
+  .brand{width:30px;height:30px;border:1px solid var(--line-strong);display:grid;place-items:center;margin-bottom:26px;font-size:11px;letter-spacing:.08em;font-weight:600}
+  .rail button{width:40px;height:40px;background:none;border:0;color:var(--dim);display:grid;place-items:center;cursor:pointer;position:relative;transition:color .18s}
+  .rail button:hover{color:var(--text)}
+  .rail button.active{color:var(--text)}
+  .rail button.active::before{content:"";position:absolute;left:-14px;top:12px;bottom:12px;width:2px;background:var(--accent)}
+  .rail svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.3}
+  .rail .spacer{flex:1}
+
+  main{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+  .topbar{height:56px;flex:0 0 56px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:34px;padding:0 40px}
+  .wordmark{font-size:13px;letter-spacing:.34em;font-weight:500}
+  nav{display:flex;gap:30px;height:100%}
+  nav a{display:flex;align-items:center;color:var(--muted);text-decoration:none;font-size:12px;letter-spacing:.13em;text-transform:uppercase;border-bottom:1px solid transparent;transition:color .18s,border-color .18s}
+  nav a:hover{color:var(--text)}
+  nav a.on{color:var(--text);border-bottom-color:var(--accent)}
+  .topbar .right{margin-left:auto;display:flex;align-items:center;gap:22px;color:var(--muted);font-size:12px;letter-spacing:.06em}
+  .dot{width:5px;height:5px;border-radius:50%;background:var(--ok);display:inline-block;margin-right:7px;vertical-align:1px}
+  .clock{font-variant-numeric:tabular-nums;color:var(--text)}
+
+  .scroll{overflow-y:auto;flex:1;padding:44px 40px 56px}
+  .scroll::-webkit-scrollbar{width:6px}
+  .scroll::-webkit-scrollbar-thumb{background:#222}
+
+  .eyebrow{font-size:11px;letter-spacing:.26em;text-transform:uppercase;color:var(--dim);margin-bottom:14px}
+  .page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:30px}
+  h1{font-size:38px;font-weight:200;letter-spacing:-.02em;line-height:1.05}
+  .sub{color:var(--muted);font-size:12.5px;margin-top:10px;letter-spacing:.02em}
+  .tools{display:flex;gap:10px}
+  .btn{background:none;border:1px solid var(--line-strong);color:var(--text);padding:9px 16px;font:inherit;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;cursor:pointer;transition:.18s}
+  .btn:hover{background:#fff;color:#000;border-color:#fff}
+  .btn.ghost{color:var(--muted)}
+  .btn.ghost:hover{color:#000}
+
+  .layout{display:grid;grid-template-columns:1fr 320px;gap:1px;background:var(--line);border:1px solid var(--line)}
+  .pane{background:var(--bg);padding:22px 26px}
+
+  .tree{font-size:12.5px;line-height:1}
+  .node{display:flex;align-items:center;gap:10px;padding:8px 0;cursor:pointer;border-bottom:1px solid transparent;transition:background .12s}
+  .node:hover{background:rgba(255,255,255,.025)}
+  .node.sel{background:rgba(255,255,255,.035);box-shadow:inset 2px 0 0 var(--accent)}
+  .node .caret{width:12px;flex:0 0 12px;color:var(--dim);font-size:9px;transition:transform .15s;text-align:center}
+  .node .caret.closed{transform:rotate(-90deg)}
+  .node .name{white-space:nowrap}
+  .node .pid{color:var(--dim);font-size:10px;letter-spacing:.06em}
+  .node .st{width:5px;height:5px;border-radius:50%;flex:0 0 5px;margin-left:2px}
+  .node .st.running{background:var(--ok)}
+  .node .st.sleep{background:var(--muted)}
+  .node .st.wait{background:var(--accent)}
+  .node .st.idle{background:var(--dim)}
+  .node .metrics{margin-left:auto;display:flex;gap:22px;font-size:10.5px;color:var(--dim);font-variant-numeric:tabular-nums;flex:0 0 auto}
+  .node .metrics b{font-weight:400;color:var(--muted)}
+  .children{margin-left:10px;padding-left:14px;border-left:1px solid var(--line-faint)}
+  .children.hidden{display:none}
+
+  .detail .k{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim);margin-bottom:14px}
+  .detail h2{font-size:19px;font-weight:300;letter-spacing:-.01em}
+  .detail .pid{font-size:10.5px;color:var(--dim);letter-spacing:.08em;margin-top:5px}
+  .detail .rows{margin-top:22px;border-top:1px solid var(--line)}
+  .detail .rows div{display:flex;justify-content:space-between;gap:16px;padding:9px 0;border-bottom:1px solid var(--line-faint);font-size:11.5px;color:var(--muted)}
+  .detail .rows b{color:var(--text);font-weight:400;font-variant-numeric:tabular-nums;text-align:right}
+  .detail .cmd{margin-top:18px;font-size:10.5px;color:var(--dim);line-height:1.6;word-break:break-all;letter-spacing:.02em}
+  .detail .act{display:flex;gap:8px;margin-top:20px}
+  .detail .act .btn{flex:1}
+  .warnbtn:hover{background:var(--accent);border-color:var(--accent);color:#fff}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="brand">G</div>
+    <button class="active" title="概览"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></button>
+    <button title="扩展"><svg viewBox="0 0 24 24"><path d="M10 3h4v4h4v4h4v4h-4v4h-4v-4H10v4H6v-4H2v-4h4V7h4z"/></svg></button>
+    <button title="外观"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg></button>
+    <button title="设备"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13"/><path d="M8 21h8M12 17v4"/></svg></button>
+    <button title="电源"><svg viewBox="0 0 24 24"><path d="M12 2v10"/><path d="M6 6a8 8 0 1 0 12 0"/></svg></button>
+    <div class="spacer"></div>
+    <button title="设置"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-4l-.3 2.6a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 2.6h4l.3-2.6a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6c.1-.3.1-.7.1-1z"/></svg></button>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div class="wordmark">GNOUS</div>
+      <nav>
+        <a href="#">Overview</a>
+        <a href="#" class="on">Processes</a>
+      </nav>
+      <div class="right">
+        <span><span class="dot"></span>System nominal</span>
+        <span>GNOME 48 · Wayland</span>
+        <span class="clock">21:04</span>
+      </div>
+    </header>
+
+    <div class="scroll">
+      <div class="page-head">
+        <div>
+          <div class="eyebrow">Processes · Tree view · asus</div>
+          <h1>进程树</h1>
+          <div class="sub">按父子关系展开 · 共 312 个进程</div>
+        </div>
+        <div class="tools">
+          <button class="btn ghost" id="collapse">全部折叠</button>
+          <button class="btn">重新采样</button>
+        </div>
+      </div>
+
+      <div class="layout">
+        <div class="pane">
+          <div class="tree" id="tree"></div>
+        </div>
+
+        <div class="pane detail">
+          <div class="k">选中进程</div>
+          <h2 id="d-name">gnome-shell</h2>
+          <div class="pid" id="d-pid">PID 1842 · gdm</div>
+          <div class="rows">
+            <div><span>状态</span><b id="d-state">RUNNING</b></div>
+            <div><span>CPU</span><b id="d-cpu">8.4%</b></div>
+            <div><span>常驻内存</span><b id="d-mem">412 MB</b></div>
+            <div><span>线程</span><b id="d-threads">62</b></div>
+            <div><span>子进程</span><b id="d-kids">3</b></div>
+            <div><span>启动时间</span><b id="d-start">6 天前</b></div>
+          </div>
+          <div class="cmd" id="d-cmd">/usr/bin/gnome-shell --mode=user</div>
+          <div class="act">
+            <button class="btn">查看详情</button>
+            <button class="btn warnbtn">结束</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+const TREE = {
+  n:"systemd", pid:1, user:"root", state:"RUNNING", cpu:0.1, mem:14, threads:1, start:"6 天前",
+  cmd:"/sbin/init splash", kids:[
+    {n:"systemd-journald", pid:412, user:"root", state:"SLEEP", cpu:0.1, mem:38, threads:5, start:"6 天前", cmd:"/lib/systemd/systemd-journald"},
+    {n:"NetworkManager", pid:733, user:"root", state:"SLEEP", cpu:0.0, mem:52, threads:4, start:"6 天前", cmd:"/usr/sbin/NetworkManager --no-daemon"},
+    {n:"gdm", pid:1180, user:"root", state:"SLEEP", cpu:0.2, mem:96, threads:3, start:"6 天前", cmd:"/usr/sbin/gdm3", kids:[
+      {n:"gnome-shell", pid:1842, user:"gdm", state:"RUNNING", cpu:8.4, mem:412, threads:62, start:"6 天前", cmd:"/usr/bin/gnome-shell --mode=user", kids:[
+        {n:"Xwayland", pid:1791, user:"me", state:"SLEEP", cpu:0.9, mem:221, threads:8, start:"6 天前", cmd:"/usr/bin/Xwayland :0"},
+        {n:"pipewire", pid:2103, user:"me", state:"SLEEP", cpu:0.4, mem:62, threads:12, start:"6 天前", cmd:"/usr/bin/pipewire"},
+        {n:"tracker-miner-fs", pid:8811, user:"me", state:"IDLE", cpu:0.1, mem:74, threads:4, start:"18 分钟前", cmd:"/usr/libexec/tracker-miner-fs-3"},
+      ]},
+    ]},
+    {n:"gnome-terminal", pid:15322, user:"me", state:"RUNNING", cpu:0.3, mem:148, threads:6, start:"12 秒前", cmd:"/usr/bin/gnome-terminal-server", kids:[
+      {n:"bash", pid:16200, user:"me", state:"SLEEP", cpu:0.0, mem:12, threads:1, start:"12 秒前", cmd:"bash -l", kids:[
+        {n:"code", pid:12034, user:"me", state:"RUNNING", cpu:1.8, mem:964, threads:38, start:"3 分钟前", cmd:"/usr/share/code/code --unity-launch"},
+      ]},
+    ]},
+    {n:"firefox", pid:9210, user:"me", state:"SLEEP", cpu:6.1, mem:1843, threads:84, start:"3 天前", cmd:"/usr/lib/firefox/firefox", kids:[
+      {n:"Web Content", pid:9301, user:"me", state:"SLEEP", cpu:1.2, mem:486, threads:22, start:"3 天前", cmd:"/usr/lib/firefox/firefox -contentproc -childID 1"},
+      {n:"Web Content", pid:9315, user:"me", state:"SLEEP", cpu:0.8, mem:412, threads:20, start:"3 天前", cmd:"/usr/lib/firefox/firefox -contentproc -childID 2"},
+      {n:"Isolated Web Co", pid:9340, user:"me", state:"IDLE", cpu:0.1, mem:128, threads:14, start:"2 小时前", cmd:"/usr/lib/firefox/firefox -contentproc -isolated"},
+    ]},
+    {n:"btrfs-scrub", pid:44102, user:"root", state:"IO WAIT", cpu:2.2, mem:86, threads:3, start:"42 分钟前", cmd:"/usr/bin/btrfs scrub start -B /"},
+  ]
+};
+
+let selected = "gnome-shell";
+
+function nodeHtml(p, depth){
+  const kids = p.kids || [];
+  const hasKids = kids.length > 0;
+  const stClass = p.state === "RUNNING" ? "running" : p.state === "IO WAIT" ? "wait" : p.state === "IDLE" ? "idle" : "sleep";
+  const mem = p.mem >= 1024 ? (p.mem/1024).toFixed(1)+" GB" : p.mem+" MB";
+  return `
+    <div class="node-wrap">
+      <div class="node${p.n===selected?" sel":""}" data-name="${p.n}" data-pid="${p.pid}">
+        <span class="caret${hasKids?"":" "}${hasKids?"":""}">${hasKids?"▾":"·"}</span>
+        <span class="name">${p.n}</span>
+        <span class="pid">${p.pid}</span>
+        <span class="st ${stClass}"></span>
+        <span class="metrics">
+          <span>CPU <b>${p.cpu.toFixed(1)}%</b></span>
+          <span>内存 <b>${mem}</b></span>
+          <span>线程 <b>${p.threads}</b></span>
+        </span>
+      </div>
+      ${hasKids ? `<div class="children">${kids.map(k=>nodeHtml(k, depth+1)).join("")}</div>` : ""}
+    </div>`;
+}
+
+function render(){
+  document.querySelector("#tree").innerHTML = nodeHtml(TREE, 0);
+  document.querySelectorAll(".node").forEach(el=>{
+    el.addEventListener("click", e=>{
+      if(e.target.classList.contains("caret")){
+        const kids = el.parentElement.querySelector(":scope > .children");
+        if(kids){ kids.classList.toggle("hidden"); e.target.classList.toggle("closed", kids.classList.contains("hidden")); }
+        return;
+      }
+      selected = el.dataset.name;
+      document.querySelectorAll(".node").forEach(n=>n.classList.toggle("sel", n===el));
+      detail(el.dataset.pid);
+    });
+  });
+}
+
+function find(node, pid){
+  if(String(node.pid) === String(pid)) return node;
+  for(const k of node.kids || []){
+    const hit = find(k, pid);
+    if(hit) return hit;
+  }
+  return null;
+}
+
+function detail(pid){
+  const p = find(TREE, pid) || find(TREE, 1842);
+  document.querySelector("#d-name").textContent = p.n;
+  document.querySelector("#d-pid").textContent = `PID ${p.pid} · ${p.user}`;
+  document.querySelector("#d-state").textContent = p.state;
+  document.querySelector("#d-cpu").textContent = p.cpu.toFixed(1) + "%";
+  document.querySelector("#d-mem").textContent = p.mem >= 1024 ? (p.mem/1024).toFixed(1)+" GB" : p.mem+" MB";
+  document.querySelector("#d-threads").textContent = p.threads;
+  document.querySelector("#d-kids").textContent = (p.kids||[]).length;
+  document.querySelector("#d-start").textContent = p.start;
+  document.querySelector("#d-cmd").textContent = p.cmd;
+}
+
+document.querySelector("#collapse").addEventListener("click", ()=>{
+  document.querySelectorAll(".children").forEach(c=>c.classList.add("hidden"));
+  document.querySelectorAll(".caret").forEach(c=>{ if(c.textContent!=="·") c.classList.add("closed"); });
+});
+
+render(); detail(1842);
+</script>
+</body>
+</html>

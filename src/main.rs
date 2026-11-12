@@ -1,5 +1,8 @@
 mod ext;
 mod icons;
+mod pages;
+mod proc;
+mod registry;
 mod sys;
 mod theme;
 mod toggles;
@@ -27,13 +30,20 @@ use theme::{
 const DOUBLE_CLICK: Duration = Duration::from_millis(320);
 const DRAG_THRESHOLD: f32 = 4.;
 
-struct App {
+pub(crate) struct App {
     probe: sys::Probe,
     snap: sys::Snapshot,
     provider: ext::FilesystemProvider,
     extensions: Vec<ext::Extension>,
     toggles: toggles::Toggles,
     switches: Vec<toggles::Toggle>,
+    proc_sampler: proc::Sampler,
+    proc: proc::Snapshot,
+    /// Total CPU% of the last 30 samples, for the live view.
+    cpu_history: Vec<f32>,
+    proc_selected: Option<u32>,
+    /// First click arms "结束", second click sends SIGTERM.
+    proc_kill_armed: Option<u32>,
     /// UUID of the extension whose details are open in the right panel.
     selected: Option<String>,
     /// Last provider failure, shown inside the detail panel.
@@ -56,6 +66,12 @@ impl App {
         let extensions = provider.list();
         let toggles = toggles::Toggles::new();
         let switches = toggles.read();
+        // Two samples 120 ms apart: the first one has no previous reading, so
+        // per-process CPU would be zero for the whole first second.
+        let mut proc_sampler = proc::Sampler::new();
+        let _ = proc_sampler.sample();
+        std::thread::sleep(Duration::from_millis(120));
+        let proc = proc_sampler.sample();
         // Sampling runs on the UI thread: every probe is a procfs/sysfs read,
         // so a tick costs microseconds and never races the render.
         cx.spawn(async move |this, cx| {
@@ -67,6 +83,12 @@ impl App {
                 let alive = this
                     .update(cx, |app, cx| {
                         app.snap = app.probe.sample();
+                        if app.nav.page.plugin == "processes" {
+                            app.proc = app.proc_sampler.sample();
+                            app.cpu_history.push(app.proc.cpu_total);
+                            let excess = app.cpu_history.len().saturating_sub(30);
+                            app.cpu_history.drain(0..excess);
+                        }
                         if rescan {
                             app.provider.reload();
                             app.extensions = app.provider.list();
@@ -88,6 +110,11 @@ impl App {
             extensions,
             toggles,
             switches,
+            proc_sampler,
+            proc,
+            cpu_history: Vec::new(),
+            proc_selected: None,
+            proc_kill_armed: None,
             selected: None,
             error: None,
             nav: Nav::default(),
@@ -98,19 +125,51 @@ impl App {
 
     /// Switch section: the rail highlight and the tab row both follow.
     fn go_section(&mut self, section: Section, cx: &mut Context<Self>) {
-        self.nav = Nav {
-            section,
-            page: section.pages()[0],
-        };
+        let page = section
+            .pages()
+            .into_iter()
+            .next()
+            .unwrap_or(PageRef::OVERVIEW);
+        self.nav = Nav { section, page };
         self.selected = None;
         self.error = None;
         cx.notify();
     }
 
-    fn go_page(&mut self, page: Page, cx: &mut Context<Self>) {
+    fn go_page(&mut self, page: PageRef, cx: &mut Context<Self>) {
         self.nav.page = page;
         self.selected = None;
         self.error = None;
+        if page.plugin == "processes" {
+            self.proc = self.proc_sampler.sample();
+            self.cpu_history.push(self.proc.cpu_total);
+            let excess = self.cpu_history.len().saturating_sub(30);
+            self.cpu_history.drain(0..excess);
+        }
+        cx.notify();
+    }
+
+    /// Two-step terminate: the first call arms the process, the second kills it.
+    pub(crate) fn kill_process(&mut self, pid: u32, cx: &mut Context<Self>) {
+        if self.proc_kill_armed != Some(pid) {
+            self.proc_kill_armed = Some(pid);
+            self.error = None;
+            cx.notify();
+            return;
+        }
+        self.proc_kill_armed = None;
+        self.error = proc::signal(pid, libc::SIGTERM).err();
+        self.proc = self.proc_sampler.sample();
+        cx.notify();
+    }
+
+    /// Select a process row; used by every process view.
+    pub(crate) fn select_process(&mut self, pid: u32, cx: &mut Context<Self>) {
+        self.proc_selected = if self.proc_selected == Some(pid) {
+            None
+        } else {
+            Some(pid)
+        };
         cx.notify();
     }
 
@@ -175,6 +234,10 @@ impl Render for App {
                             selected: self.selected.as_deref(),
                             error: self.error.as_deref(),
                             page: self.nav.page,
+                            proc: &self.proc,
+                            cpu_history: &self.cpu_history,
+                            proc_selected: self.proc_selected,
+                            proc_kill_armed: self.proc_kill_armed,
                         },
                         cx,
                     )),
@@ -225,50 +288,74 @@ impl Section {
         }
     }
 
+    /// Key used by plugin manifests to attach pages to this section.
+    fn key(self) -> &'static str {
+        match self {
+            Section::Overview => "overview",
+            Section::Extensions => "extensions",
+            Section::Appearance => "appearance",
+            Section::Devices => "devices",
+            Section::Power => "power",
+        }
+    }
+
     /// Pages this section shows in the top bar. First one is the default.
-    fn pages(self) -> &'static [Page] {
-        match self {
-            Section::Overview => &[Page::Overview, Page::Processes],
-            Section::Extensions => &[Page::Installed],
-            Section::Appearance => &[Page::Appearance],
-            Section::Devices => &[Page::Devices],
-            Section::Power => &[Page::Power],
+    /// Core pages come first, then whatever plugins registered for the section.
+    fn pages(self) -> Vec<PageRef> {
+        let core = match self {
+            Section::Overview => vec![PageRef::OVERVIEW],
+            Section::Extensions => vec![PageRef::INSTALLED],
+            Section::Appearance => vec![PageRef::APPEARANCE],
+            Section::Devices => vec![PageRef::DEVICES],
+            Section::Power => vec![PageRef::POWER],
+        };
+        let mut pages = core;
+        for (manifest, view) in registry::views_for(self.key()) {
+            pages.push(PageRef {
+                plugin: manifest.id.as_str(),
+                view: view.id.as_str(),
+                label: view.label.as_str(),
+            });
         }
+        pages
     }
 }
 
+/// One top-bar tab. `plugin` is `core` for built-in pages, otherwise the id of
+/// the plugin that declared the view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Page {
-    Overview,
-    Processes,
-    Installed,
-    Appearance,
-    Devices,
-    Power,
+struct PageRef {
+    plugin: &'static str,
+    view: &'static str,
+    label: &'static str,
 }
 
-impl Page {
-    fn index(self) -> u32 {
-        match self {
-            Page::Overview => 0,
-            Page::Processes => 1,
-            Page::Installed => 2,
-            Page::Appearance => 3,
-            Page::Devices => 4,
-            Page::Power => 5,
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Page::Overview => "Overview",
-            Page::Processes => "Processes",
-            Page::Installed => "Installed",
-            Page::Appearance => "Appearance",
-            Page::Devices => "Devices",
-            Page::Power => "Power",
-        }
-    }
+impl PageRef {
+    const OVERVIEW: PageRef = PageRef {
+        plugin: "core",
+        view: "overview",
+        label: "Overview",
+    };
+    const INSTALLED: PageRef = PageRef {
+        plugin: "core",
+        view: "installed",
+        label: "Installed",
+    };
+    const APPEARANCE: PageRef = PageRef {
+        plugin: "core",
+        view: "appearance",
+        label: "Appearance",
+    };
+    const DEVICES: PageRef = PageRef {
+        plugin: "core",
+        view: "devices",
+        label: "Devices",
+    };
+    const POWER: PageRef = PageRef {
+        plugin: "core",
+        view: "power",
+        label: "Power",
+    };
 }
 
 /// Single source of truth for navigation: both the rail and the tabs render
@@ -276,14 +363,14 @@ impl Page {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Nav {
     section: Section,
-    page: Page,
+    page: PageRef,
 }
 
 impl Default for Nav {
     fn default() -> Self {
         Self {
             section: Section::Overview,
-            page: Page::Overview,
+            page: PageRef::OVERVIEW,
         }
     }
 }
@@ -507,19 +594,19 @@ fn grip(id: &'static str, edge: ResizeEdge, place: impl FnOnce(Div) -> Div) -> i
         })
 }
 
-fn nav_item(page: Page, active: bool, weak: &WeakEntity<App>) -> Stateful<Div> {
+fn nav_item(page: PageRef, active: bool, weak: &WeakEntity<App>) -> Stateful<Div> {
     let color = if active { text() } else { muted() };
     let weakness = weak.clone();
     div()
         .h_full()
         .flex()
         .items_center()
-        .id(("nav", page.index()))
+        .id(page.view)
         .cursor_pointer()
         .border_b(px(1.))
         .border_color(if active { accent() } else { alpha(0x00000000) })
         .hover(|this| this.border_color(if active { accent() } else { line_strong() }))
-        .child(caps(page.label(), 12., FontWeight::NORMAL, color, 0.13))
+        .child(caps(page.label, 12., FontWeight::NORMAL, color, 0.13))
         .on_click(move |_, _, cx| {
             let _ = weakness.update(cx, |app, cx| app.go_page(page, cx));
         })
@@ -531,21 +618,26 @@ fn nav_item(page: Page, active: bool, weak: &WeakEntity<App>) -> Stateful<Div> {
 
 /// Everything the overview needs for one frame, so layout helpers take one
 /// argument instead of six.
-struct Overview<'a> {
-    snap: &'a sys::Snapshot,
+pub(crate) struct Overview<'a> {
+    pub(crate) snap: &'a sys::Snapshot,
     extensions: &'a [ext::Extension],
     switches: &'a [toggles::Toggle],
     selected: Option<&'a str>,
     error: Option<&'a str>,
-    page: Page,
+    pub(crate) page: PageRef,
+    pub(crate) proc: &'a proc::Snapshot,
+    pub(crate) cpu_history: &'a [f32],
+    pub(crate) proc_selected: Option<u32>,
+    pub(crate) proc_kill_armed: Option<u32>,
 }
 
 fn content(overview: &Overview, cx: &mut Context<App>) -> impl IntoElement {
     let weak = cx.entity().downgrade();
-    let body = match overview.page {
-        Page::Overview => overview_body(overview, &weak),
-        Page::Installed => extensions_body(overview, &weak),
-        page => placeholder(page),
+    let body = match (overview.page.plugin, overview.page.view) {
+        ("core", "overview") => overview_body(overview, &weak),
+        ("core", "installed") => extensions_body(overview, &weak),
+        ("processes", view) => pages::processes::body(view, overview, &weak),
+        (_, label) => placeholder(label),
     };
     v().id("content")
         .flex_1()
@@ -582,12 +674,12 @@ fn extensions_body(overview: &Overview, weak: &WeakEntity<App>) -> Div {
 }
 
 /// Sections whose content is not designed yet.
-fn placeholder(page: Page) -> Div {
+fn placeholder(page: &str) -> Div {
     v().pt(px(30.))
         .pb(px(80.))
         .child(caps("待设计", 10.5, FontWeight::NORMAL, dim(), 0.22))
         .child(
-            txt(page.label(), 44., FontWeight::EXTRA_LIGHT, text())
+            txt(page, 44., FontWeight::EXTRA_LIGHT, text())
                 .line_height(px(46.))
                 .mt(px(14.)),
         )

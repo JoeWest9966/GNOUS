@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GNOUS · 进程页 E Grouped Cards</title>
+<style>
+  :root{
+    --bg:#000000;--surface:#0A0A0B;--surface-2:#111113;
+    --line:rgba(255,255,255,.09);--line-strong:rgba(255,255,255,.18);--line-faint:rgba(255,255,255,.05);
+    --text:#F5F5F7;--muted:#86868B;--dim:#5A5A60;--accent:#E31937;--ok:#37D67A;--warn:#F5A623;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scrollbar-width:thin;scrollbar-color:#242424 transparent}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--text);font-family:"Helvetica Neue",Inter,"Segoe UI",system-ui,"Noto Sans SC",sans-serif;-webkit-font-smoothing:antialiased;font-feature-settings:"tnum";overflow:hidden}
+  .app{display:grid;grid-template-columns:68px 1fr;height:100vh}
+
+  .rail{border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:22px 0;gap:6px}
+  .brand{width:30px;height:30px;border:1px solid var(--line-strong);display:grid;place-items:center;margin-bottom:26px;font-size:11px;letter-spacing:.08em;font-weight:600}
+  .rail button{width:40px;height:40px;background:none;border:0;color:var(--dim);display:grid;place-items:center;cursor:pointer;position:relative;transition:color .18s}
+  .rail button:hover{color:var(--text)}
+  .rail button.active{color:var(--text)}
+  .rail button.active::before{content:"";position:absolute;left:-14px;top:12px;bottom:12px;width:2px;background:var(--accent)}
+  .rail svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.3}
+  .rail .spacer{flex:1}
+
+  main{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+  .topbar{height:56px;flex:0 0 56px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:34px;padding:0 40px}
+  .wordmark{font-size:13px;letter-spacing:.34em;font-weight:500}
+  nav{display:flex;gap:30px;height:100%}
+  nav a{display:flex;align-items:center;color:var(--muted);text-decoration:none;font-size:12px;letter-spacing:.13em;text-transform:uppercase;border-bottom:1px solid transparent;transition:color .18s,border-color .18s}
+  nav a:hover{color:var(--text)}
+  nav a.on{color:var(--text);border-bottom-color:var(--accent)}
+  .topbar .right{margin-left:auto;display:flex;align-items:center;gap:22px;color:var(--muted);font-size:12px;letter-spacing:.06em}
+  .dot{width:5px;height:5px;border-radius:50%;background:var(--ok);display:inline-block;margin-right:7px;vertical-align:1px}
+  .clock{font-variant-numeric:tabular-nums;color:var(--text)}
+
+  .scroll{overflow-y:auto;flex:1;padding:44px 40px 56px}
+  .scroll::-webkit-scrollbar{width:6px}
+  .scroll::-webkit-scrollbar-thumb{background:#222}
+
+  .eyebrow{font-size:11px;letter-spacing:.26em;text-transform:uppercase;color:var(--dim);margin-bottom:14px}
+  .page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:34px}
+  h1{font-size:38px;font-weight:200;letter-spacing:-.02em;line-height:1.05}
+  .sub{color:var(--muted);font-size:12.5px;margin-top:10px;letter-spacing:.02em}
+  .global{display:flex;gap:34px;text-align:right}
+  .global div .k{font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
+  .global div .v{font-size:22px;font-weight:200;margin-top:5px;letter-spacing:-.02em}
+  .global div .v small{font-size:11px;color:var(--muted);margin-left:3px}
+
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line)}
+  .card{background:var(--bg);padding:26px 24px;display:flex;flex-direction:column;min-width:0}
+  .card .head{display:flex;align-items:baseline;justify-content:space-between}
+  .card .head .k{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim)}
+  .card .head .count{font-size:10.5px;color:var(--dim);letter-spacing:.06em}
+  .card h3{font-size:13px;font-weight:400;letter-spacing:.02em;margin-top:12px}
+  .card .sum{font-size:30px;font-weight:200;letter-spacing:-.03em;margin-top:14px}
+  .card .sum small{font-size:12px;font-weight:300;color:var(--muted);margin-left:5px}
+  .card .stack{display:flex;height:3px;margin:16px 0 6px;background:rgba(255,255,255,.06);gap:1px}
+  .card .stack i{display:block;height:100%}
+  .card .axis{display:flex;justify-content:space-between;font-size:9.5px;color:var(--dim);letter-spacing:.08em;margin-bottom:18px}
+  .plist{flex:1}
+  .prow{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line-faint);cursor:pointer;transition:background .12s}
+  .prow:last-child{border-bottom:0}
+  .prow:hover{background:rgba(255,255,255,.025)}
+  .prow .n{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .prow .n small{display:block;font-size:9.5px;color:var(--dim);letter-spacing:.06em;margin-top:3px}
+  .prow .nums{text-align:right;font-size:10.5px;color:var(--dim);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .prow .nums b{display:block;font-weight:400;color:var(--muted);font-size:11.5px}
+  .card .more{margin-top:16px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);cursor:pointer;transition:color .15s}
+  .card .more:hover{color:var(--text)}
+
+  .legend{display:flex;gap:22px;margin-top:26px;font-size:10.5px;color:var(--dim);letter-spacing:.06em}
+  .legend span{display:flex;align-items:center;gap:7px}
+  .legend i{width:6px;height:6px;border-radius:50%;display:block}
+  .legend .sys{background:#F5F5F7}
+  .legend .usr{background:#86868B}
+  .legend .app{background:#E31937}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="brand">G</div>
+    <button class="active" title="概览"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></button>
+    <button title="扩展"><svg viewBox="0 0 24 24"><path d="M10 3h4v4h4v4h4v4h-4v4h-4v-4H10v4H6v-4H2v-4h4V7h4z"/></svg></button>
+    <button title="外观"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg></button>
+    <button title="设备"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13"/><path d="M8 21h8M12 17v4"/></svg></button>
+    <button title="电源"><svg viewBox="0 0 24 24"><path d="M12 2v10"/><path d="M6 6a8 8 0 1 0 12 0"/></svg></button>
+    <div class="spacer"></div>
+    <button title="设置"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-4l-.3 2.6a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 2.6h4l.3-2.6a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6c.1-.3.1-.7.1-1z"/></svg></button>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div class="wordmark">GNOUS</div>
+      <nav>
+        <a href="#">Overview</a>
+        <a href="#" class="on">Processes</a>
+      </nav>
+      <div class="right">
+        <span><span class="dot"></span>System nominal</span>
+        <span>GNOME 48 · Wayland</span>
+        <span class="clock">21:04</span>
+      </div>
+    </header>
+
+    <div class="scroll">
+      <div class="page-head">
+        <div>
+          <div class="eyebrow">Processes · Grouped by cgroup · asus</div>
+          <h1>分组</h1>
+          <div class="sub">按 systemd slice 归类 · 每组显示前 4 个进程</div>
+        </div>
+        <div class="global">
+          <div><div class="k">进程</div><div class="v">312</div></div>
+          <div><div class="k">线程</div><div class="v">1,842</div></div>
+          <div><div class="k">CPU</div><div class="v">18.4<small>%</small></div></div>
+          <div><div class="k">内存</div><div class="v">11.2<small>GB</small></div></div>
+        </div>
+      </div>
+
+      <div class="cards" id="cards"></div>
+
+      <div class="legend">
+        <span><i class="sys"></i>system.slice</span>
+        <span><i class="usr"></i>user.slice</span>
+        <span><i class="app"></i>app.slice</span>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+const GROUPS = [
+  {
+    id:"system.slice", tint:"#F5F5F7", title:"系统服务", count:214, cpu:3.1, mem:1.2,
+    procs:[
+      {n:"gnome-shell", pid:1842, cpu:8.4, mem:412, user:"gdm", state:"RUNNING"},
+      {n:"btrfs-scrub", pid:44102,cpu:2.2, mem:86,  user:"root",state:"IO WAIT"},
+      {n:"systemd-journald", pid:412, cpu:0.1, mem:38, user:"root",state:"SLEEP"},
+      {n:"NetworkManager", pid:733, cpu:0.0, mem:52, user:"root",state:"SLEEP"},
+    ]
+  },
+  {
+    id:"user.slice", tint:"#86868B", title:"用户会话", count:74, cpu:9.7, mem:3.4,
+    procs:[
+      {n:"Xwayland", pid:1791, cpu:0.9, mem:221, user:"me", state:"SLEEP"},
+      {n:"pipewire", pid:2103, cpu:0.4, mem:62,  user:"me", state:"SLEEP"},
+      {n:"tracker-miner-fs", pid:8811, cpu:0.1, mem:74, user:"me", state:"IDLE"},
+      {n:"gnome-software", pid:7721, cpu:0.1, mem:196, user:"me", state:"SLEEP"},
+    ]
+  },
+  {
+    id:"app.slice", tint:"#E31937", title:"前台应用", count:24, cpu:5.6, mem:6.6,
+    procs:[
+      {n:"firefox", pid:9210, cpu:6.1, mem:1843, user:"me", state:"SLEEP"},
+      {n:"code", pid:12034, cpu:1.8, mem:964, user:"me", state:"RUNNING"},
+      {n:"gnome-terminal", pid:15322, cpu:0.3, mem:148, user:"me", state:"RUNNING"},
+      {n:"dconf-service", pid:1932, cpu:0.0, mem:18, user:"me", state:"SLEEP"},
+    ]
+  }
+];
+
+function fmtMem(mb){ return mb >= 1024 ? (mb/1024).toFixed(1)+" GB" : mb+" MB"; }
+
+document.querySelector("#cards").innerHTML = GROUPS.map(g=>{
+  const max = Math.max(...g.procs.map(p=>p.cpu), 1);
+  return `
+  <div class="card">
+    <div class="head"><span class="k">${g.id}</span><span class="count">${g.count} 个进程</span></div>
+    <h3>${g.title}</h3>
+    <div class="sum">${g.cpu.toFixed(1)}<small>% CPU · ${g.mem.toFixed(1)} GB</small></div>
+    <div class="stack">
+      ${g.procs.map(p=>`<i style="width:${(p.cpu/max*100).toFixed(1)}%;background:${g.tint};opacity:${0.35+(p.cpu/max)*0.65}"></i>`).join("")}
+    </div>
+    <div class="axis"><span>top 4 · 按 CPU</span><span>${g.procs.reduce((s,p)=>s+p.cpu,0).toFixed(1)}% 可见</span></div>
+    <div class="plist">
+      ${g.procs.map(p=>`
+        <div class="prow" title="${p.n} · ${p.state}">
+          <div class="n">${p.n}<small>PID ${p.pid} · ${p.user} · ${p.state}</small></div>
+          <div class="nums"><b>${p.cpu.toFixed(1)}%</b>${fmtMem(p.mem)}</div>
+        </div>`).join("")}
+    </div>
+    <div class="more">查看全部 ${g.count} 个 →</div>
+  </div>`;
+}).join("");
+</script>
+</body>
+</html>

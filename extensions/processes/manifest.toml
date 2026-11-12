@@ -1,0 +1,31 @@
+id = "processes"
+name = "进程"
+summary = "查看系统进程与资源占用，五种视图共用同一份 /proc 采样"
+version = "0.1.0"
+capabilities = ["page"]
+icon = "activity"
+
+# section 缺省为 overview
+[nav]
+label = "Processes"
+order = 10
+
+[[views]]
+id = "table"
+label = "Table"
+
+[[views]]
+id = "live"
+label = "Live"
+
+[[views]]
+id = "memory"
+label = "Memory"
+
+[[views]]
+id = "tree"
+label = "Tree"
+
+[[views]]
+id = "groups"
+label = "Groups"

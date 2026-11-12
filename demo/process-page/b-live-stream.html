@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GNOUS · 进程页 B Live Stream</title>
+<style>
+  :root{
+    --bg:#000000;--surface:#0A0A0B;--surface-2:#111113;
+    --line:rgba(255,255,255,.09);--line-strong:rgba(255,255,255,.18);--line-faint:rgba(255,255,255,.05);
+    --text:#F5F5F7;--muted:#86868B;--dim:#5A5A60;--accent:#E31937;--ok:#37D67A;--warn:#F5A623;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scrollbar-width:thin;scrollbar-color:#242424 transparent}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--text);font-family:"Helvetica Neue",Inter,"Segoe UI",system-ui,"Noto Sans SC",sans-serif;-webkit-font-smoothing:antialiased;font-feature-settings:"tnum";overflow:hidden}
+  .app{display:grid;grid-template-columns:68px 1fr;height:100vh}
+
+  .rail{border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:22px 0;gap:6px}
+  .brand{width:30px;height:30px;border:1px solid var(--line-strong);display:grid;place-items:center;margin-bottom:26px;font-size:11px;letter-spacing:.08em;font-weight:600}
+  .rail button{width:40px;height:40px;background:none;border:0;color:var(--dim);display:grid;place-items:center;cursor:pointer;position:relative;transition:color .18s}
+  .rail button:hover{color:var(--text)}
+  .rail button.active{color:var(--text)}
+  .rail button.active::before{content:"";position:absolute;left:-14px;top:12px;bottom:12px;width:2px;background:var(--accent)}
+  .rail svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.3}
+  .rail .spacer{flex:1}
+
+  main{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+  .topbar{height:56px;flex:0 0 56px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:34px;padding:0 40px}
+  .wordmark{font-size:13px;letter-spacing:.34em;font-weight:500}
+  nav{display:flex;gap:30px;height:100%}
+  nav a{display:flex;align-items:center;color:var(--muted);text-decoration:none;font-size:12px;letter-spacing:.13em;text-transform:uppercase;border-bottom:1px solid transparent;transition:color .18s,border-color .18s}
+  nav a:hover{color:var(--text)}
+  nav a.on{color:var(--text);border-bottom-color:var(--accent)}
+  .topbar .right{margin-left:auto;display:flex;align-items:center;gap:22px;color:var(--muted);font-size:12px;letter-spacing:.06em}
+  .dot{width:5px;height:5px;border-radius:50%;background:var(--ok);display:inline-block;margin-right:7px;vertical-align:1px}
+  .clock{font-variant-numeric:tabular-nums;color:var(--text)}
+
+  .scroll{overflow-y:auto;flex:1;padding:44px 40px 56px}
+  .scroll::-webkit-scrollbar{width:6px}
+  .scroll::-webkit-scrollbar-thumb{background:#222}
+
+  .eyebrow{font-size:11px;letter-spacing:.26em;text-transform:uppercase;color:var(--dim);margin-bottom:14px}
+  .page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:34px}
+  h1{font-size:38px;font-weight:200;letter-spacing:-.02em;line-height:1.05}
+  .sub{color:var(--muted);font-size:12.5px;margin-top:10px;letter-spacing:.02em}
+  .live-tag{display:flex;align-items:center;gap:8px;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line-strong);padding:8px 12px}
+  .pulse{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+
+  .layout{display:grid;grid-template-columns:1.55fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line)}
+  .cell{background:var(--bg);padding:26px 26px}
+  .cell.wide{padding:26px 28px}
+
+  .chart-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px}
+  .chart-head .k{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim)}
+  .chart-head .val{font-size:44px;font-weight:200;letter-spacing:-.03em;line-height:1}
+  .chart-head .val small{font-size:14px;font-weight:300;color:var(--muted);margin-left:6px;letter-spacing:0}
+  .chart-meta{display:flex;gap:24px;margin:14px 0 4px;font-size:10.5px;color:var(--dim);letter-spacing:.06em}
+  .chart-meta b{color:var(--muted);font-weight:400}
+  .chart{width:100%;height:190px;display:block;margin-top:6px}
+
+  .row-list{margin-top:8px}
+  .row{display:grid;grid-template-columns:120px 1fr 56px;align-items:center;gap:14px;padding:11px 0;border-bottom:1px solid var(--line-faint)}
+  .row:last-child{border-bottom:0}
+  .row .n{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .n small{display:block;color:var(--dim);font-size:10px;letter-spacing:.06em;margin-top:2px}
+  .row .track{height:1px;background:var(--line-strong);position:relative}
+  .row .track i{position:absolute;left:0;top:-1px;height:3px;background:var(--text);transition:width .6s cubic-bezier(.2,.8,.2,1)}
+  .row .track i.hot{background:var(--accent)}
+  .row .p{text-align:right;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+  .side .block + .block{margin-top:24px;padding-top:22px;border-top:1px solid var(--line)}
+  .side .k{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim);margin-bottom:16px}
+  .stat-line{display:flex;align-items:center;justify-content:space-between;font-size:11.5px;padding:7px 0;color:var(--muted)}
+  .stat-line b{color:var(--text);font-weight:400;font-variant-numeric:tabular-nums}
+  .stack{display:flex;height:6px;margin:14px 0 10px;gap:2px}
+  .stack i{display:block;height:100%}
+  .legend{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;font-size:10.5px;color:var(--dim);letter-spacing:.04em}
+  .legend span{display:flex;align-items:center;gap:7px}
+  .legend span::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+  .legend .running{color:var(--ok)}
+  .legend .sleep{color:var(--muted)}
+  .legend .wait{color:var(--accent)}
+  .legend .idle{color:var(--dim)}
+  .legend em{margin-left:auto;font-style:normal;color:var(--muted)}
+
+  .recent{font-size:11.5px;color:var(--muted)}
+  .recent div{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line-faint)}
+  .recent div:last-child{border-bottom:0}
+  .recent span:last-child{color:var(--dim);font-size:10.5px;letter-spacing:.06em}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="brand">G</div>
+    <button class="active" title="概览"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></button>
+    <button title="扩展"><svg viewBox="0 0 24 24"><path d="M10 3h4v4h4v4h4v4h-4v4h-4v-4H10v4H6v-4H2v-4h4V7h4z"/></svg></button>
+    <button title="外观"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg></button>
+    <button title="设备"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13"/><path d="M8 21h8M12 17v4"/></svg></button>
+    <button title="电源"><svg viewBox="0 0 24 24"><path d="M12 2v10"/><path d="M6 6a8 8 0 1 0 12 0"/></svg></button>
+    <div class="spacer"></div>
+    <button title="设置"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-4l-.3 2.6a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 2.6h4l.3-2.6a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6c.1-.3.1-.7.1-1z"/></svg></button>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div class="wordmark">GNOUS</div>
+      <nav>
+        <a href="#">Overview</a>
+        <a href="#" class="on">Processes</a>
+      </nav>
+      <div class="right">
+        <span><span class="dot"></span>System nominal</span>
+        <span>GNOME 48 · Wayland</span>
+        <span class="clock">21:04</span>
+      </div>
+    </header>
+
+    <div class="scroll">
+      <div class="page-head">
+        <div>
+          <div class="eyebrow">Processes · asus · GNOME 48</div>
+          <h1>实时</h1>
+          <div class="sub">最近 30 秒 · 采样间隔 1 秒 · 12 个采样点/屏</div>
+        </div>
+        <div class="live-tag"><span class="pulse"></span>Live</div>
+      </div>
+
+      <div class="layout">
+        <div class="cell wide">
+          <div class="chart-head">
+            <div class="k">CPU 总占用</div>
+            <div class="val"><span id="cpu-now">8.4</span><small>%</small></div>
+          </div>
+          <svg class="chart" id="chart" viewBox="0 0 720 190" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#ffffff" stop-opacity=".18"/>
+                <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <g id="grid"></g>
+            <path id="area" fill="url(#fade)" stroke="none"></path>
+            <path id="line" fill="none" stroke="#F5F5F7" stroke-width="1.2"></path>
+            <circle id="head" r="2.5" fill="#E31937"></circle>
+          </svg>
+          <div class="chart-meta">
+            <span>峰值 <b id="cpu-max">61.2%</b></span>
+            <span>均值 <b id="cpu-avg">18.7%</b></span>
+            <span>线程 <b>1,842</b></span>
+            <span>负载 <b>1.24</b></span>
+          </div>
+
+          <div class="row-list" id="hot"></div>
+        </div>
+
+        <div class="cell side">
+          <div class="block">
+            <div class="k">状态分布</div>
+            <div class="stack">
+              <i class="running" style="width:6%;background:var(--ok)"></i>
+              <i class="sleep" style="width:78%;background:var(--muted)"></i>
+              <i class="wait" style="width:9%;background:var(--accent)"></i>
+              <i class="idle" style="width:7%;background:var(--dim)"></i>
+            </div>
+            <div class="legend">
+              <span class="running">运行中 <em>18</em></span>
+              <span class="sleep">休眠 <em>241</em></span>
+              <span class="wait">IO 等待 <em>27</em></span>
+              <span class="idle">空闲 <em>26</em></span>
+            </div>
+          </div>
+
+          <div class="block">
+            <div class="k">系统</div>
+            <div class="stat-line"><span>内存</span><b>11.2 / 15 GB</b></div>
+            <div class="stat-line"><span>SWAP</span><b>0.4 GB</b></div>
+            <div class="stat-line"><span>根分区</span><b>418 / 512 GB</b></div>
+            <div class="stat-line"><span>温度</span><b>48 °C</b></div>
+            <div class="stat-line"><span>运行时长</span><b>6 天 14 小时</b></div>
+          </div>
+
+          <div class="block">
+            <div class="k">最近启动</div>
+            <div class="recent">
+              <div><span>gnome-terminal</span><span>12s</span></div>
+              <div><span>code</span><span>3m</span></div>
+              <div><span>tracker-miner-fs</span><span>18m</span></div>
+              <div><span>gnome-software</span><span>42m</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+const HOT = [
+  {n:"gnome-shell", pid:1842, cpu:8.4},
+  {n:"firefox",     pid:9210, cpu:6.1},
+  {n:"btrfs-scrub", pid:44102,cpu:2.2},
+  {n:"code",        pid:12034,cpu:1.8},
+  {n:"Xwayland",    pid:1791, cpu:0.9},
+];
+
+const W=720, H=190, N=30;
+let hist = Array.from({length:N}, (_,i) => 14 + Math.sin(i/4)*6 + Math.random()*8);
+
+const grid = document.querySelector("#grid");
+const gy = [0.25,0.5,0.75].map(f => `<line x1="0" y1="${H*f}" x2="${W}" y2="${H*f}" stroke="rgba(255,255,255,.07)" stroke-width="1"/>`).join("");
+grid.innerHTML = gy;
+
+function draw(){
+  const max = Math.max(...hist, 10) * 1.15;
+  const step = W/(N-1);
+  const pts = hist.map((v,i) => [i*step, H - (v/max)*H]);
+  const line = pts.map((p,i) => `${i?"L":"M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+  const area = `${line} L${W},${H} L0,${H} Z`;
+  document.querySelector("#line").setAttribute("d", line);
+  document.querySelector("#area").setAttribute("d", area);
+  const head = pts[pts.length-1];
+  document.querySelector("#head").setAttribute("cx", head[0]);
+  document.querySelector("#head").setAttribute("cy", head[1]);
+  document.querySelector("#cpu-now").textContent = hist[hist.length-1].toFixed(1);
+  document.querySelector("#cpu-max").textContent = Math.max(...hist).toFixed(1) + "%";
+  document.querySelector("#cpu-avg").textContent = (hist.reduce((a,b)=>a+b,0)/N).toFixed(1) + "%";
+}
+
+function hot(){
+  const max = Math.max(...HOT.map(h=>h.cpu), 1);
+  document.querySelector("#hot").innerHTML = HOT.map(h => `
+    <div class="row">
+      <div class="n">${h.n}<small>PID ${h.pid}</small></div>
+      <div class="track"><i class="${h.cpu>5?"hot":""}" style="width:${(h.cpu/max*100).toFixed(1)}%"></i></div>
+      <div class="p">${h.cpu.toFixed(1)}%</div>
+    </div>`).join("");
+}
+
+draw(); hot();
+setInterval(() => {
+  const last = hist[hist.length-1];
+  const next = Math.max(2, Math.min(70, last + (Math.random()-0.5)*9));
+  hist.push(next); hist.shift();
+  HOT[0].cpu = Math.max(0.5, HOT[0].cpu + (Math.random()-0.5)*3);
+  HOT[1].cpu = Math.max(0.5, HOT[1].cpu + (Math.random()-0.5)*2);
+  draw(); hot();
+}, 1000);
+</script>
+</body>
+</html>

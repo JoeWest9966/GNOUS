@@ -30,7 +30,11 @@
   顶栏 tab 是该分区内的页面（如 Overview → Overview / Processes）。两者共用一份
   `Nav` 状态，所以永远同步；未实现的页面显示占位而不是假数据。
 
-其余区块（进程表、启动器）仍是静态占位。
+- 进程页已按 `docs/EXTENSIONS.md` 做成第一个页面级扩展：`extensions/processes/manifest.toml`
+  声明 5 个视图（Table / Live / Memory / Tree / Groups），顶栏 tab 由 registry 生成，五种视图共用
+  同一份 `/proc` 采样，支持点击选中与两步确认结束进程。
+
+其余区块（启动器）仍是静态占位。
 
 ![GNOUS 渲染](docs/gnous.png)
 
@@ -48,6 +52,9 @@ src/
 ├── main.rs    # 窗口、图标栏、顶栏、概览各区块的布局
 ├── sys.rs     # 只读系统采样（procfs / sysfs + statvfs），输出一帧 Snapshot
 ├── ext.rs     # 扩展清单：Provider 抽象 + 文件/gsettings 默认后端
+├── registry.rs # 编译期插件注册表：解析 extensions/*/manifest.toml，生成顶栏页面
+├── proc.rs    # 进程采样：/proc/<pid>/stat + status，CPU 差分、用户名、cgroup
+├── pages/     # 页面级扩展的渲染器（pages/processes.rs = 五种视图）
 ├── toggles.rs # 右侧快捷开关：gsettings bool/choice 与外部命令，缺失即置灰
 ├── theme.rs   # 设计 token（颜色 / 字体 / 字距 / 行高）与文本辅助函数
 └── icons.rs   # 内联 SVG 线性图标（stroke 1.3，与 demo 完全一致）
