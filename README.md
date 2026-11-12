@@ -2,6 +2,11 @@
 
 本机 GNOME 管理面板。
 
+## 技术栈
+
+- **语言**：Rust
+- **UI 框架**：[GPUI](https://github.com/longbridge/gpui-kit)（`gpui-kit`，含 `gpui-base` 行为层与 `gpui-component` 样式组件层）
+
 ## 结构
 
 ```
@@ -17,4 +22,4 @@ UI 方向已确定：**A · Control Deck**（纯黑中控屏风格，Tesla 风�
 xdg-open demo/ui-directions/a-cockpit.html
 ```
 
-具体功能与实现计划待定。
+功能与实现计划待定。
