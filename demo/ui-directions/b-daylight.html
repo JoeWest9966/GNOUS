@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GNOUS · B Daylight</title>
+<style>
+  :root{
+    --white:#FFFFFF;
+    --ink:#171A20;         /* Tesla 官网主文字 */
+    --gray:#5C5E62;
+    --gray-2:#8E8E8E;
+    --line:#E8E8E8;
+    --fill:#F4F4F4;
+    --blue:#3E6AE1;        /* Tesla 官网链接蓝 */
+    --red:#E31937;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth;scrollbar-width:thin;scrollbar-color:#C9CDD4 transparent}
+  body{
+    background:var(--white);color:var(--ink);
+    font-family:"Universal Sans","Helvetica Neue",Inter,system-ui,"Noto Sans SC",sans-serif;
+    -webkit-font-smoothing:antialiased;
+    font-feature-settings:"tnum";
+  }
+  a{color:inherit;text-decoration:none}
+
+  /* ------- top nav ------- */
+  .nav{
+    position:fixed;top:0;left:0;right:0;height:52px;z-index:50;
+    display:flex;align-items:center;justify-content:space-between;
+    padding:0 34px;background:rgba(255,255,255,.86);
+    backdrop-filter:blur(18px) saturate(180%);
+    border-bottom:1px solid rgba(0,0,0,.06);
+  }
+  .logo{font-size:15px;font-weight:600;letter-spacing:.28em}
+  .nav-links{display:flex;gap:6px}
+  .nav-links a{
+    font-size:13px;font-weight:500;padding:8px 14px;border-radius:4px;
+    transition:background .16s;letter-spacing:.01em;
+  }
+  .nav-links a:hover{background:rgba(0,0,0,.05)}
+  .nav-links a.on{background:rgba(0,0,0,.06)}
+  .nav-right{display:flex;align-items:center;gap:16px;font-size:12.5px;color:var(--gray)}
+  .pill{
+    display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);
+    border-radius:100px;padding:6px 13px;font-size:12px;
+  }
+  .pill i{width:6px;height:6px;border-radius:50%;background:#12A150;display:block}
+
+  /* ------- buttons ------- */
+  .btn{
+    border:0;border-radius:4px;cursor:pointer;font-family:inherit;
+    font-size:13px;font-weight:500;letter-spacing:.02em;
+    padding:11px 26px;transition:background .16s,color .16s;
+  }
+  .btn.dark{background:#171A20;color:#fff}
+  .btn.dark:hover{background:#33373D}
+  .btn.light{background:rgba(255,255,255,.75);color:#171A20;backdrop-filter:blur(10px)}
+  .btn.light:hover{background:#fff}
+  .btn.blue{background:var(--blue);color:#fff}
+  .btn.blue:hover{background:#2f57c4}
+  .btn.ghost{background:var(--fill);color:var(--ink)}
+  .btn.ghost:hover{background:#EAEAEA}
+  .btn.outline{background:transparent;color:var(--ink);box-shadow:inset 0 0 0 1px rgba(23,26,32,.28)}
+  .btn.outline:hover{box-shadow:inset 0 0 0 1px #171A20;background:rgba(255,255,255,.6)}
+
+  /* ------- hero ------- */
+  .hero{
+    height:100vh;min-height:620px;position:relative;
+    display:flex;flex-direction:column;justify-content:center;align-items:center;
+    text-align:center;overflow:hidden;
+    background:
+      radial-gradient(1200px 600px at 50% 118%, #DDE3F0 0%, transparent 62%),
+      linear-gradient(180deg,#FAFBFC 0%,#F1F3F7 52%,#E7EAF1 100%);
+  }
+  .hero::before{
+    /* abstract horizon line */
+    content:"";position:absolute;left:50%;bottom:-140px;width:min(1180px,150vw);height:560px;
+    transform:translateX(-50%);border-radius:50%;
+    background:linear-gradient(180deg,rgba(255,255,255,.95),rgba(255,255,255,0));
+    box-shadow:0 -1px 0 rgba(23,26,32,.06);
+  }
+  .hero-inner{position:relative;z-index:2;padding:0 24px}
+  .kicker{
+    font-size:11.5px;letter-spacing:.42em;text-transform:uppercase;color:var(--gray-2);margin-bottom:26px;
+  }
+  h1{
+    font-size:clamp(42px,6.4vw,84px);line-height:1.02;font-weight:500;
+    letter-spacing:-.028em;
+  }
+  h1 em{font-style:normal;color:var(--gray-2)}
+  .hero p{
+    margin-top:22px;font-size:16px;line-height:1.6;color:var(--gray);max-width:520px;
+    margin-left:auto;margin-right:auto;font-weight:400;
+  }
+  .hero-cta{display:flex;gap:12px;justify-content:center;margin-top:38px}
+  .hero-stats{
+    position:relative;z-index:2;display:flex;gap:64px;margin-top:96px;
+    padding-top:30px;border-top:1px solid rgba(23,26,32,.1);
+  }
+  .hero-stats .s{text-align:center}
+  .hero-stats .n{font-size:26px;font-weight:500;letter-spacing:-.02em}
+  .hero-stats .l{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--gray-2);margin-top:8px}
+  .scrollhint{
+    position:absolute;bottom:28px;left:50%;transform:translateX(-50%);
+    font-size:10.5px;letter-spacing:.3em;text-transform:uppercase;color:var(--gray-2);
+    display:flex;flex-direction:column;align-items:center;gap:10px;z-index:2;
+  }
+  .scrollhint::after{content:"";width:1px;height:34px;background:linear-gradient(#171A20,transparent)}
+
+  /* ------- section ------- */
+  section{padding:96px 34px}
+  .wrap{max-width:1240px;margin:0 auto}
+  .sec-head{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:40px;gap:24px}
+  .sec-head h2{font-size:clamp(26px,3vw,38px);font-weight:500;letter-spacing:-.02em;line-height:1.1}
+  .sec-head .desc{font-size:14px;color:var(--gray);margin-top:12px;max-width:420px;line-height:1.6}
+  .sec-head .link{font-size:13px;color:var(--blue);font-weight:500;white-space:nowrap}
+  .sec-head .link:hover{text-decoration:underline}
+
+  /* ------- status cards ------- */
+  .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+  .card{
+    background:#fff;border:1px solid var(--line);border-radius:6px;padding:26px 24px 24px;
+    transition:box-shadow .22s,transform .22s;
+  }
+  .card:hover{box-shadow:0 14px 40px rgba(23,26,32,.08);transform:translateY(-2px)}
+  .card .label{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--gray-2)}
+  .card .value{font-size:40px;font-weight:400;letter-spacing:-.03em;margin-top:16px;line-height:1;font-variant-numeric:tabular-nums}
+  .card .value span{font-size:14px;color:var(--gray-2);letter-spacing:0;margin-left:4px}
+  .card .meta{display:flex;justify-content:space-between;font-size:12px;color:var(--gray);margin-top:20px}
+  .track{height:4px;border-radius:100px;background:var(--fill);margin-top:18px;overflow:hidden}
+  .track i{display:block;height:100%;border-radius:100px;background:var(--ink)}
+  .track i.blue{background:var(--blue)}
+  .track i.red{background:var(--red)}
+
+  /* ------- feature split ------- */
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+  .panel{
+    border:1px solid var(--line);border-radius:6px;padding:30px;background:#fff;
+    display:flex;flex-direction:column;min-height:340px;
+  }
+  .panel h3{font-size:19px;font-weight:500;letter-spacing:-.01em}
+  .panel .p-desc{font-size:13.5px;color:var(--gray);margin-top:8px;line-height:1.55}
+  .panel .p-body{margin-top:auto}
+  .row-item{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:15px 0;border-bottom:1px solid var(--line);font-size:14px;
+  }
+  .row-item:last-child{border-bottom:0}
+  .row-item .sub{font-size:11.5px;color:var(--gray-2);margin-top:4px;letter-spacing:.02em}
+  .row-item .badge{
+    font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--gray);background:var(--fill);padding:4px 9px;border-radius:3px;
+  }
+  .row-item .badge.ok{color:#0E7A3C;background:#E9F7EF}
+  .row-item .badge.warn{color:#A85B00;background:#FDF3E4}
+
+  /* toggle */
+  .tg{width:44px;height:24px;border-radius:100px;background:#DCDCDC;position:relative;border:0;cursor:pointer;transition:background .2s;flex:0 0 auto}
+  .tg::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .2s cubic-bezier(.3,.8,.3,1)}
+  .tg[aria-checked="true"]{background:var(--ink)}
+  .tg[aria-checked="true"]::after{transform:translateX(20px)}
+
+  /* ------- themes showcase ------- */
+  .themes{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .theme{border-radius:6px;overflow:hidden;border:1px solid var(--line);cursor:pointer;background:#fff}
+  .theme .preview{height:190px;position:relative;padding:18px;display:flex;flex-direction:column;gap:10px}
+  .theme .bar{height:8px;border-radius:3px;background:rgba(255,255,255,.14)}
+  .theme .win{border-radius:4px;flex:1;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);display:flex}
+  .theme .win .side{width:38px;border-right:1px solid rgba(255,255,255,.08)}
+  .theme .win .body{flex:1;padding:10px;display:flex;flex-direction:column;gap:7px}
+  .theme .win .body span{display:block;height:6px;border-radius:2px;background:rgba(255,255,255,.12)}
+  .theme.dark .preview{background:linear-gradient(160deg,#191B1F,#0D0E10)}
+  .theme.mid .preview{background:linear-gradient(160deg,#2B3442,#1A212B)}
+  .theme.light .preview{background:linear-gradient(160deg,#F7F8FA,#E9ECF1)}
+  .theme.light .bar{background:rgba(0,0,0,.1)}
+  .theme.light .win{border-color:rgba(0,0,0,.08);background:rgba(255,255,255,.7)}
+  .theme.light .win .side{border-color:rgba(0,0,0,.07)}
+  .theme.light .win .body span{background:rgba(0,0,0,.09)}
+  .theme .cap{padding:16px 18px;display:flex;justify-content:space-between;align-items:center;font-size:13.5px}
+  .theme .cap small{color:var(--gray-2);font-size:11.5px;letter-spacing:.06em}
+
+  /* ------- footer ------- */
+  footer{background:#F4F4F4;padding:56px 34px;margin-top:40px}
+  footer .wrap{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;color:var(--gray);flex-wrap:wrap;gap:20px}
+  footer .fl{display:flex;gap:28px}
+  footer a:hover{text-decoration:underline}
+
+  @media(max-width:1000px){
+    .cards{grid-template-columns:repeat(2,1fr)}
+    .split{grid-template-columns:1fr}
+    .themes{grid-template-columns:1fr}
+    .nav-links{display:none}
+    .hero-stats{gap:34px}
+  }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="logo">GNOUS</div>
+  <div class="nav-links">
+    <a href="#" class="on">总览</a>
+    <a href="#">扩展</a>
+    <a href="#">外观</a>
+    <a href="#">窗口</a>
+    <a href="#">设备</a>
+    <a href="#">电源</a>
+  </div>
+  <div class="nav-right">
+    <span class="pill"><i></i>Wayland · 正常</span>
+    <a href="#" style="font-weight:500;color:var(--ink)">账户</a>
+  </div>
+</header>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-inner">
+    <div class="kicker">GNOME 46 · ThinkPad X1 Carbon</div>
+    <h1>你的桌面<em>，</em><br>由你掌控。</h1>
+    <p>一个轻量、直接、无干扰的 GNOME 管理面板。查看系统状态、管理扩展与主题，所有操作即时生效。</p>
+    <div class="hero-cta">
+      <button class="btn dark">打开控制面板</button>
+      <button class="btn outline">查看系统报告</button>
+    </div>
+  </div>
+  <div class="hero-stats">
+    <div class="s"><div class="n">6天14时</div><div class="l">运行时间</div></div>
+    <div class="s"><div class="n">14</div><div class="l">已装扩展</div></div>
+    <div class="s"><div class="n">418 GB</div><div class="l">已用存储</div></div>
+    <div class="s"><div class="n">48°C</div><div class="l">核心温度</div></div>
+  </div>
+  <div class="scrollhint">向下</div>
+</div>
+
+<!-- STATUS -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div>
+        <h2>实时状态</h2>
+        <div class="desc">每 2 秒刷新一次。点击任一卡片进入详细监控。</div>
+      </div>
+      <a href="#" class="link">自定义指标 →</a>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="label">CPU 负载</div>
+        <div class="value">24<span>%</span></div>
+        <div class="track"><i style="width:24%"></i></div>
+        <div class="meta"><span>12 核 · 4.2 GHz</span><span>48°C</span></div>
+      </div>
+      <div class="card">
+        <div class="label">内存</div>
+        <div class="value">11.2<span>GB / 32</span></div>
+        <div class="track"><i class="blue" style="width:35%"></i></div>
+        <div class="meta"><span>Swap 0.4 GB</span><span>35%</span></div>
+      </div>
+      <div class="card">
+        <div class="label">存储 · 根分区</div>
+        <div class="value">418<span>GB / 512</span></div>
+        <div class="track"><i class="red" style="width:81%"></i></div>
+        <div class="meta"><span>Btrfs · NVMe</span><span style="color:var(--red)">剩余 94 GB</span></div>
+      </div>
+      <div class="card">
+        <div class="label">网络吞吐</div>
+        <div class="value">2.4<span>MB/s</span></div>
+        <div class="track"><i style="width:42%"></i></div>
+        <div class="meta"><span>Wi-Fi 6E</span><span>↓2.4 ↑0.3</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PANELS -->
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="sec-head">
+      <div><h2>快速控制</h2><div class="desc">常用开关集中在一处，无需层层进入设置。</div></div>
+    </div>
+    <div class="split">
+      <div class="panel">
+        <h3>系统开关</h3>
+        <div class="p-desc">立即生效，无需重启会话。</div>
+        <div class="p-body">
+          <div class="row-item">
+            <div><div>深色界面</div><div class="sub">Prefer dark · 全局应用</div></div>
+            <button class="tg" aria-checked="true" onclick="this.setAttribute('aria-checked',this.getAttribute('aria-checked')==='true'?'false':'true')"></button>
+          </div>
+          <div class="row-item">
+            <div><div>勿扰模式</div><div class="sub">屏蔽全部通知 · 至 08:00</div></div>
+            <button class="tg" aria-checked="false" onclick="this.setAttribute('aria-checked',this.getAttribute('aria-checked')==='true'?'false':'true')"></button>
+          </div>
+          <div class="row-item">
+            <div><div>性能模式</div><div class="sub">CPU 调度器 → performance</div></div>
+            <button class="tg" aria-checked="false" onclick="this.setAttribute('aria-checked',this.getAttribute('aria-checked')==='true'?'false':'true')"></button>
+          </div>
+          <div class="row-item">
+            <div><div>夜间色温</div><div class="sub">22:00 – 07:00 · 3400K</div></div>
+            <button class="tg" aria-checked="true" onclick="this.setAttribute('aria-checked',this.getAttribute('aria-checked')==='true'?'false':'true')"></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>扩展</h3>
+        <div class="p-desc">14 个已安装 · 11 个正在运行</div>
+        <div class="p-body">
+          <div class="row-item">
+            <div><div>Dash to Dock</div><div class="sub">v79 · 作者 micxgx</div></div>
+            <span class="badge ok">运行中</span>
+          </div>
+          <div class="row-item">
+            <div><div>Blur my Shell</div><div class="sub">v57 · 作者 aunetx</div></div>
+            <span class="badge ok">运行中</span>
+          </div>
+          <div class="row-item">
+            <div><div>Vitals</div><div class="sub">v73 · 传感器读数异常</div></div>
+            <span class="badge warn">需处理</span>
+          </div>
+          <div class="row-item">
+            <div><div>Just Perfection</div><div class="sub">v26 · 已手动禁用</div></div>
+            <span class="badge">已禁用</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- THEMES -->
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="sec-head">
+      <div><h2>外观</h2><div class="desc">为主题、图标与字体选择一套预设。</div></div>
+      <a href="#" class="link">浏览全部 →</a>
+    </div>
+    <div class="themes">
+      <div class="theme dark">
+        <div class="preview">
+          <div class="bar" style="width:36%"></div>
+          <div class="win"><div class="side"></div><div class="body"><span style="width:70%"></span><span style="width:52%"></span><span style="width:84%"></span></div></div>
+        </div>
+        <div class="cap"><span>Obsidian</span><small>当前使用</small></div>
+      </div>
+      <div class="theme mid">
+        <div class="preview">
+          <div class="bar" style="width:36%"></div>
+          <div class="win"><div class="side"></div><div class="body"><span style="width:70%"></span><span style="width:52%"></span><span style="width:84%"></span></div></div>
+        </div>
+        <div class="cap"><span>Atlantic</span><small>Adwaita Dark</small></div>
+      </div>
+      <div class="theme light">
+        <div class="preview">
+          <div class="bar" style="width:36%"></div>
+          <div class="win"><div class="side"></div><div class="body"><span style="width:70%"></span><span style="width:52%"></span><span style="width:84%"></span></div></div>
+        </div>
+        <div class="cap"><span>Paper</span><small>Adwaita Light</small></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="fl"><span>GNOUS</span><a href="#">文档</a><a href="#">快捷键</a><a href="#">日志</a></div>
+    <div>GNOME 46.2 · 内核 6.9.7 · Wayland</div>
+  </div>
+</footer>
+
+<script>
+  document.querySelectorAll('.nav-links a').forEach(a=>{
+    a.addEventListener('click',e=>{
+      e.preventDefault();
+      document.querySelectorAll('.nav-links a').forEach(x=>x.classList.remove('on'));
+      a.classList.add('on');
+    });
+  });
+</script>
+</body>
+</html>

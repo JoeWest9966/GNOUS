@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GNOUS · A Control Deck</title>
+<style>
+  :root{
+    --bg:#000000;
+    --surface:#0A0A0B;
+    --surface-2:#111113;
+    --line:rgba(255,255,255,.09);
+    --line-strong:rgba(255,255,255,.18);
+    --text:#F5F5F7;
+    --muted:#86868B;
+    --dim:#5A5A60;
+    --accent:#E31937;
+    --ok:#37D67A;
+    --warn:#F5A623;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scrollbar-width:thin;scrollbar-color:#242424 transparent}
+  html,body{height:100%}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:"Helvetica Neue",Inter,"Segoe UI",system-ui,"Noto Sans SC",sans-serif;
+    -webkit-font-smoothing:antialiased;
+    font-feature-settings:"tnum";
+    overflow:hidden;
+  }
+  .app{display:grid;grid-template-columns:68px 1fr;height:100vh}
+
+  /* ---------- icon rail ---------- */
+  .rail{
+    border-right:1px solid var(--line);
+    display:flex;flex-direction:column;align-items:center;
+    padding:22px 0;gap:6px;
+  }
+  .brand{
+    width:30px;height:30px;border:1px solid var(--line-strong);
+    display:grid;place-items:center;margin-bottom:26px;
+    font-size:11px;letter-spacing:.08em;font-weight:600;
+  }
+  .rail button{
+    width:40px;height:40px;background:none;border:0;color:var(--dim);
+    display:grid;place-items:center;cursor:pointer;position:relative;
+    transition:color .18s;
+  }
+  .rail button:hover{color:var(--text)}
+  .rail button.active{color:var(--text)}
+  .rail button.active::before{
+    content:"";position:absolute;left:-14px;top:12px;bottom:12px;width:2px;background:var(--accent);
+  }
+  .rail svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.3}
+  .rail .spacer{flex:1}
+
+  /* ---------- main ---------- */
+  main{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+
+  .topbar{
+    height:56px;flex:0 0 56px;border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:34px;padding:0 40px;
+  }
+  .wordmark{font-size:13px;letter-spacing:.34em;font-weight:500}
+  nav{display:flex;gap:30px;height:100%}
+  nav a{
+    display:flex;align-items:center;color:var(--muted);text-decoration:none;
+    font-size:12px;letter-spacing:.13em;text-transform:uppercase;
+    border-bottom:1px solid transparent;transition:color .18s,border-color .18s;
+  }
+  nav a:hover{color:var(--text)}
+  nav a.on{color:var(--text);border-bottom-color:var(--accent)}
+  .topbar .right{margin-left:auto;display:flex;align-items:center;gap:22px;color:var(--muted);font-size:12px;letter-spacing:.06em}
+  .dot{width:5px;height:5px;border-radius:50%;background:var(--ok);display:inline-block;margin-right:7px;vertical-align:1px}
+  .clock{font-variant-numeric:tabular-nums;color:var(--text)}
+
+  .scroll{overflow-y:auto;flex:1;padding:52px 40px 64px}
+  .scroll::-webkit-scrollbar{width:6px}
+  .scroll::-webkit-scrollbar-thumb{background:#222}
+
+  /* ---------- hero ---------- */
+  .eyebrow{
+    font-size:11px;letter-spacing:.26em;text-transform:uppercase;color:var(--dim);margin-bottom:14px;
+  }
+  h1{font-size:44px;font-weight:200;letter-spacing:-.02em;line-height:1.05}
+  .sub{color:var(--muted);font-size:13px;margin-top:12px;letter-spacing:.02em}
+  .hero{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:56px}
+  .hero-actions{display:flex;gap:10px}
+  .btn{
+    background:none;border:1px solid var(--line-strong);color:var(--text);
+    padding:11px 22px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+    cursor:pointer;transition:.18s;font-family:inherit;
+  }
+  .btn:hover{background:#fff;color:#000;border-color:#fff}
+  .btn.solid{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.solid:hover{background:#c2142d;border-color:#c2142d;color:#fff}
+
+  /* ---------- metrics ---------- */
+  .metrics{
+    display:grid;grid-template-columns:repeat(4,1fr);
+    border-top:1px solid var(--line);margin-bottom:58px;
+  }
+  .metric{padding:30px 28px 26px;border-left:1px solid var(--line);position:relative}
+  .metric:first-child{border-left:0;padding-left:0}
+  .metric .k{font-size:10.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim);margin-bottom:22px}
+  .metric .v{font-size:52px;font-weight:200;letter-spacing:-.03em;line-height:1;display:flex;align-items:baseline;gap:8px}
+  .metric .v small{font-size:15px;font-weight:300;color:var(--muted);letter-spacing:0}
+  .bar{height:1px;background:var(--line-strong);margin-top:24px;position:relative;overflow:hidden}
+  .bar i{position:absolute;inset:0 auto 0 0;background:var(--text);display:block;transition:width .8s cubic-bezier(.2,.8,.2,1)}
+  .metric.hot .bar i{background:var(--accent)}
+  .metric .foot{display:flex;justify-content:space-between;margin-top:11px;font-size:10.5px;color:var(--dim);letter-spacing:.06em}
+
+  /* ---------- section ---------- */
+  .section-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:22px}
+  .section-head h2{font-size:12px;letter-spacing:.24em;text-transform:uppercase;font-weight:500;color:var(--muted)}
+  .section-head a{font-size:11px;letter-spacing:.12em;color:var(--dim);text-decoration:none;text-transform:uppercase}
+  .section-head a:hover{color:var(--text)}
+
+  .grid{display:grid;grid-template-columns:1.35fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);margin-bottom:58px}
+  .grid > .cell{background:var(--bg);padding:30px 28px}
+
+  /* toggles */
+  .tog-row{display:flex;align-items:center;justify-content:space-between;padding:16px 0;border-bottom:1px solid var(--line)}
+  .tog-row:last-child{border-bottom:0}
+  .tog-row .t{font-size:13px;letter-spacing:.02em}
+  .tog-row .d{font-size:11px;color:var(--dim);margin-top:4px;letter-spacing:.02em}
+  .switch{
+    width:46px;height:22px;border:1px solid var(--line-strong);background:rgba(255,255,255,.02);
+    border-radius:100px;position:relative;cursor:pointer;flex:0 0 auto;transition:.22s;padding:0;
+  }
+  .switch::after{
+    content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;
+    background:var(--dim);transition:.22s cubic-bezier(.2,.8,.2,1);
+  }
+  .switch:hover{border-color:var(--muted)}
+  .switch[aria-checked="true"]{border-color:rgba(255,255,255,.55);background:rgba(255,255,255,.08)}
+  .switch[aria-checked="true"]::after{left:27px;background:var(--text)}
+
+  /* extension list */
+  .ext{display:flex;align-items:center;gap:16px;padding:15px 0;border-bottom:1px solid var(--line)}
+  .ext:last-child{border-bottom:0}
+  .ext .ico{width:30px;height:30px;border:1px solid var(--line);display:grid;place-items:center;color:var(--muted);flex:0 0 auto}
+  .ext .ico svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.3}
+  .ext .n{font-size:13px}
+  .ext .m{font-size:10.5px;color:var(--dim);margin-top:3px;letter-spacing:.08em}
+  .ext .st{margin-left:auto;font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--ok)}
+  .ext .st.off{color:var(--dim)}
+  .ext .st.warn{color:var(--warn)}
+
+  /* process table */
+  table{width:100%;border-collapse:collapse}
+  th{
+    text-align:left;font-size:10px;letter-spacing:.2em;text-transform:uppercase;
+    color:var(--dim);font-weight:500;padding:0 0 14px;border-bottom:1px solid var(--line);
+  }
+  td{padding:14px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:12.5px;letter-spacing:.02em}
+  td.num{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+  th.num{text-align:right}
+  tr:last-child td{border-bottom:0}
+  .pid{color:var(--dim);font-size:10.5px;margin-left:8px;letter-spacing:.06em}
+  .spark{display:inline-block;vertical-align:middle}
+
+  /* apps strip */
+  .apps{display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line);border:1px solid var(--line)}
+  .app-tile{
+    background:var(--bg);padding:24px 18px;display:flex;flex-direction:column;
+    align-items:center;gap:12px;cursor:pointer;transition:background .18s;
+  }
+  .app-tile:hover{background:var(--surface-2)}
+  .app-tile .ring{
+    width:42px;height:42px;border:1px solid var(--line-strong);border-radius:50%;
+    display:grid;place-items:center;font-size:13px;color:var(--muted);letter-spacing:.04em;
+  }
+  .app-tile span{font-size:10.5px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- RAIL -->
+  <aside class="rail">
+    <div class="brand">G</div>
+    <button class="active" title="概览">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+    </button>
+    <button title="扩展">
+      <svg viewBox="0 0 24 24"><path d="M10 3h4v4h4v4h4v4h-4v4h-4v-4H10v4H6v-4H2v-4h4V7h4z"/></svg>
+    </button>
+    <button title="外观">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg>
+    </button>
+    <button title="设备">
+      <svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13"/><path d="M8 21h8M12 17v4"/></svg>
+    </button>
+    <button title="电源">
+      <svg viewBox="0 0 24 24"><path d="M12 2v10"/><path d="M6 6a8 8 0 1 0 12 0"/></svg>
+    </button>
+    <div class="spacer"></div>
+    <button title="设置">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-4l-.3 2.6a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 2.6h4l.3-2.6a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6c.1-.3.1-.7.1-1z"/></svg>
+    </button>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div class="wordmark">GNOUS</div>
+      <nav>
+        <a href="#" class="on">Overview</a>
+        <a href="#">Extensions</a>
+        <a href="#">Appearance</a>
+        <a href="#">Windows</a>
+        <a href="#">Power</a>
+      </nav>
+      <div class="right">
+        <span><span class="dot"></span>System nominal</span>
+        <span>GNOME 46 · Wayland</span>
+        <span class="clock">21:04</span>
+      </div>
+    </header>
+
+    <div class="scroll">
+      <div class="hero">
+        <div>
+          <div class="eyebrow">Session · ThinkPad X1 · Wayland</div>
+          <h1>系统运行正常</h1>
+          <div class="sub">已连续运行 6 天 14 小时 · 上次更新于 3 小时前</div>
+        </div>
+        <div class="hero-actions">
+          <button class="btn">扫描更新</button>
+          <button class="btn solid">重启会话</button>
+        </div>
+      </div>
+
+      <!-- METRICS -->
+      <div class="metrics">
+        <div class="metric">
+          <div class="k">CPU 负载</div>
+          <div class="v">24<small>%</small></div>
+          <div class="bar"><i style="width:24%"></i></div>
+          <div class="foot"><span>12 核 · 4.2 GHz</span><span>48°C</span></div>
+        </div>
+        <div class="metric">
+          <div class="k">内存</div>
+          <div class="v">11.2<small>/ 32 GB</small></div>
+          <div class="bar"><i style="width:35%"></i></div>
+          <div class="foot"><span>SWAP 0.4 GB</span><span>35%</span></div>
+        </div>
+        <div class="metric hot">
+          <div class="k">存储 · 根分区</div>
+          <div class="v">418<small>/ 512 GB</small></div>
+          <div class="bar"><i style="width:81%"></i></div>
+          <div class="foot"><span>Btrfs · NVMe</span><span>剩余 94 GB</span></div>
+        </div>
+        <div class="metric">
+          <div class="k">网络</div>
+          <div class="v">2.4<small>MB/s</small></div>
+          <div class="bar"><i style="width:42%"></i></div>
+          <div class="foot"><span>Wi-Fi 6E</span><span>↓ 2.4 ↑ 0.3</span></div>
+        </div>
+      </div>
+
+      <!-- SECTION: extensions + toggles -->
+      <div class="section-head">
+        <h2>扩展与开关</h2>
+        <a href="#">管理全部 14 项 →</a>
+      </div>
+      <div class="grid">
+        <div class="cell">
+          <div class="ext">
+            <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg></div>
+            <div><div class="n">Dash to Dock</div><div class="m">v79 · 运行中</div></div>
+            <div class="st">Active</div>
+          </div>
+          <div class="ext">
+            <div class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12"/><path d="M3 11h18M7 17v2M17 17v2"/></svg></div>
+            <div><div class="n">Blur my Shell</div><div class="m">v57 · 运行中</div></div>
+            <div class="st">Active</div>
+          </div>
+          <div class="ext">
+            <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/></svg></div>
+            <div><div class="n">Just Perfection</div><div class="m">v26 · 已禁用</div></div>
+            <div class="st off">Off</div>
+          </div>
+          <div class="ext">
+            <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 12h4l2-6 4 12 2-6h4"/></svg></div>
+            <div><div class="n">Vitals</div><div class="m">v73 · 传感器异常</div></div>
+            <div class="st warn">Warning</div>
+          </div>
+          <div class="ext">
+            <div class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+            <div><div class="n">Clipboard Indicator</div><div class="m">v54 · 运行中</div></div>
+            <div class="st">Active</div>
+          </div>
+        </div>
+
+        <div class="cell">
+          <div class="tog-row">
+            <div><div class="t">深色界面</div><div class="d">Prefer dark · 全局</div></div>
+            <button class="switch" aria-checked="true" onclick="this.setAttribute('aria-checked', this.getAttribute('aria-checked')==='true'?'false':'true')"></button>
+          </div>
+          <div class="tog-row">
+            <div><div class="t">勿扰模式</div><div class="d">屏蔽全部通知</div></div>
+            <button class="switch" aria-checked="false" onclick="this.setAttribute('aria-checked', this.getAttribute('aria-checked')==='true'?'false':'true')"></button>
+          </div>
+          <div class="tog-row">
+            <div><div class="t">性能模式</div><div class="d">CPU 调度器 → performance</div></div>
+            <button class="switch" aria-checked="false" onclick="this.setAttribute('aria-checked', this.getAttribute('aria-checked')==='true'?'false':'true')"></button>
+          </div>
+          <div class="tog-row">
+            <div><div class="t">夜间色温</div><div class="d">22:00 – 07:00 · 3400K</div></div>
+            <button class="switch" aria-checked="true" onclick="this.setAttribute('aria-checked', this.getAttribute('aria-checked')==='true'?'false':'true')"></button>
+          </div>
+          <div class="tog-row">
+            <div><div class="t">自动平铺</div><div class="d">窗口管理 · Pop Shell</div></div>
+            <button class="switch" aria-checked="true" onclick="this.setAttribute('aria-checked', this.getAttribute('aria-checked')==='true'?'false':'true')"></button>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECTION: processes -->
+      <div class="section-head">
+        <h2>资源热点</h2>
+        <a href="#">打开任务管理器 →</a>
+      </div>
+      <div class="cell" style="border:1px solid var(--line);padding:26px 28px;margin-bottom:58px">
+        <table>
+          <thead>
+            <tr><th>进程</th><th>状态</th><th class="num">CPU</th><th class="num">内存</th><th class="num">趋势</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>gnome-shell <span class="pid">PID 1842</span></td>
+              <td style="color:var(--ok);font-size:10.5px;letter-spacing:.14em">RUNNING</td>
+              <td class="num">8.4%</td><td class="num">412 MB</td>
+              <td class="num"><svg class="spark" width="64" height="16" viewBox="0 0 64 16"><polyline points="0,12 8,10 16,11 24,7 32,9 40,6 48,8 56,5 64,6" fill="none" stroke="#F5F5F7" stroke-width="1" opacity=".7"/></svg></td>
+            </tr>
+            <tr>
+              <td>firefox <span class="pid">PID 9210</span></td>
+              <td style="color:var(--muted);font-size:10.5px;letter-spacing:.14em">SLEEP</td>
+              <td class="num">6.1%</td><td class="num">1.8 GB</td>
+              <td class="num"><svg class="spark" width="64" height="16" viewBox="0 0 64 16"><polyline points="0,4 8,6 16,3 24,5 32,8 40,7 48,9 56,8 64,10" fill="none" stroke="#F5F5F7" stroke-width="1" opacity=".7"/></svg></td>
+            </tr>
+            <tr>
+              <td>btrfs-scrub <span class="pid">PID 44102</span></td>
+              <td style="color:var(--accent);font-size:10.5px;letter-spacing:.14em">IO WAIT</td>
+              <td class="num">2.2%</td><td class="num">86 MB</td>
+              <td class="num"><svg class="spark" width="64" height="16" viewBox="0 0 64 16"><polyline points="0,14 8,13 16,14 24,11 32,13 40,10 48,12 56,9 64,11" fill="none" stroke="#F5F5F7" stroke-width="1" opacity=".7"/></svg></td>
+            </tr>
+            <tr>
+              <td>pipewire <span class="pid">PID 2103</span></td>
+              <td style="color:var(--muted);font-size:10.5px;letter-spacing:.14em">SLEEP</td>
+              <td class="num">0.4%</td><td class="num">62 MB</td>
+              <td class="num"><svg class="spark" width="64" height="16" viewBox="0 0 64 16"><line x1="0" y1="13" x2="64" y2="13" stroke="#F5F5F7" stroke-width="1" opacity=".35"/></svg></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- SECTION: apps -->
+      <div class="section-head">
+        <h2>启动器 · 常用</h2>
+        <a href="#">编辑布局 →</a>
+      </div>
+      <div class="apps">
+        <div class="app-tile"><div class="ring">FF</div><span>Firefox</span></div>
+        <div class="app-tile"><div class="ring">TM</div><span>Terminal</span></div>
+        <div class="app-tile"><div class="ring">CD</div><span>Code</span></div>
+        <div class="app-tile"><div class="ring">FI</div><span>Files</span></div>
+        <div class="app-tile"><div class="ring">SP</div><span>Spotify</span></div>
+        <div class="app-tile"><div class="ring">＋</div><span>添加</span></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+  document.querySelectorAll('.rail button').forEach(b=>{
+    b.addEventListener('click',()=>{
+      document.querySelectorAll('.rail button').forEach(x=>x.classList.remove('active'));
+      b.classList.add('active');
+    });
+  });
+  document.querySelectorAll('nav a').forEach(a=>{
+    a.addEventListener('click',e=>{
+      e.preventDefault();
+      document.querySelectorAll('nav a').forEach(x=>x.classList.remove('on'));
+      a.classList.add('on');
+    });
+  });
+  const clock=document.querySelector('.clock');
+  const tick=()=>{const d=new Date();clock.textContent=String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')};
+  tick();setInterval(tick,20000);
+</script>
+</body>
+</html>

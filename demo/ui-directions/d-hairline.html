@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GNOUS · D Hairline</title>
+<style>
+  :root{
+    --bg:#060607;
+    --ink:#E8E8E8;
+    --muted:#6E7076;
+    --dim:#3A3C40;
+    --line:rgba(255,255,255,.08);
+    --line-2:rgba(255,255,255,.16);
+    --acid:#C7F94B;      /* 单一强调色 */
+    --red:#FF4D3D;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scrollbar-width:thin;scrollbar-color:#2A2C30 transparent}
+  html,body{height:100%}
+  body{
+    background:var(--bg);color:var(--ink);
+    font-family:var(--mono);
+    font-size:12px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+    background-image:
+      linear-gradient(var(--line) 1px,transparent 1px),
+      linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:80px 80px;
+    background-position:-1px -1px;
+  }
+  .frame{height:100vh;display:grid;grid-template-rows:38px 1fr 26px;}
+
+  /* ---- top status strip ---- */
+  .strip{
+    border-bottom:1px solid var(--line);
+    display:flex;align-items:center;padding:0 18px;gap:26px;
+    font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+    background:rgba(6,6,7,.85);backdrop-filter:blur(6px);
+  }
+  .strip .brand{color:var(--ink);font-weight:700;letter-spacing:.34em}
+  .strip .sep{color:var(--dim)}
+  .strip .right{margin-left:auto;display:flex;gap:22px;align-items:center}
+  .led{width:5px;height:5px;background:var(--acid);display:inline-block;margin-right:7px;box-shadow:0 0 8px rgba(199,249,75,.6)}
+  .led.r{background:var(--red);box-shadow:0 0 8px rgba(255,77,61,.6)}
+
+  /* ---- body ---- */
+  .body{display:grid;grid-template-columns:220px 1fr 300px;min-height:0}
+
+  /* nav column */
+  .nav{border-right:1px solid var(--line);padding:20px 0;display:flex;flex-direction:column}
+  .nav .sec{padding:0 18px;font-size:9px;letter-spacing:.24em;text-transform:uppercase;color:var(--dim);margin:18px 0 8px}
+  .nav .sec:first-child{margin-top:0}
+  .nav a{
+    display:flex;justify-content:space-between;padding:6px 18px;color:var(--muted);
+    text-decoration:none;font-size:11.5px;letter-spacing:.02em;border-left:2px solid transparent;
+    transition:.12s;
+  }
+  .nav a:hover{color:var(--ink);background:rgba(255,255,255,.025)}
+  .nav a.on{color:var(--ink);border-left-color:var(--acid);background:rgba(199,249,75,.04)}
+  .nav a span{color:var(--dim);font-size:10px}
+  .nav .foot{margin-top:auto;padding:14px 18px 0;border-top:1px solid var(--line);font-size:10px;color:var(--dim);letter-spacing:.1em}
+
+  /* main */
+  .main{overflow-y:auto;padding:26px 28px 40px;min-width:0}
+  .main::-webkit-scrollbar{width:8px}
+  .main::-webkit-scrollbar-thumb{background:#1B1C1F}
+  .main::-webkit-scrollbar-track{background:transparent}
+
+  .title-row{display:flex;justify-content:space-between;align-items:flex-end;padding-bottom:16px;border-bottom:1px solid var(--line-2);margin-bottom:26px}
+  h1{font-size:15px;font-weight:600;letter-spacing:.24em;text-transform:uppercase}
+  .title-row .path{font-size:10px;color:var(--dim);letter-spacing:.12em;margin-top:8px}
+  .title-row .acts{display:flex;gap:8px}
+  .k{
+    background:none;border:1px solid var(--line-2);color:var(--muted);font-family:inherit;
+    font-size:10px;letter-spacing:.14em;text-transform:uppercase;padding:7px 12px;cursor:pointer;transition:.14s;
+  }
+  .k:hover{background:var(--ink);color:#000;border-color:var(--ink)}
+  .k.acid{border-color:var(--acid);color:var(--acid)}
+  .k.acid:hover{background:var(--acid);color:#000}
+
+  /* big readouts */
+  .readouts{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line);margin-bottom:26px}
+  .ro{padding:18px 16px;border-right:1px solid var(--line)}
+  .ro:last-child{border-right:0}
+  .ro .l{font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
+  .ro .n{font-size:34px;font-weight:300;letter-spacing:-.04em;margin-top:14px;line-height:1}
+  .ro .n em{font-style:normal;font-size:11px;color:var(--muted);letter-spacing:.06em;margin-left:5px}
+  .ro .m{font-size:9.5px;color:var(--muted);margin-top:11px;letter-spacing:.08em;letter-spacing:.1em}
+  .ro .m.warn{color:var(--red)}
+  .spark{display:block;margin-top:12px;width:100%;height:22px}
+
+  /* blocks */
+  .block{border:1px solid var(--line);margin-bottom:26px}
+  .block-h{
+    display:flex;justify-content:space-between;align-items:center;
+    padding:10px 14px;border-bottom:1px solid var(--line);
+    font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);
+    background:rgba(255,255,255,.015);
+  }
+  .block-h .r{color:var(--dim);letter-spacing:.1em}
+
+  table{width:100%;border-collapse:collapse}
+  th{
+    text-align:left;font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);
+    font-weight:400;padding:9px 14px;border-bottom:1px solid var(--line);
+  }
+  td{padding:9px 14px;border-bottom:1px solid rgba(255,255,255,.04);font-size:11.5px;color:var(--muted)}
+  tr:last-child td{border-bottom:0}
+  tbody tr:hover td{background:rgba(255,255,255,.02);color:var(--ink)}
+  td.name{color:var(--ink)}
+  td.num{text-align:right}
+  th.num{text-align:right}
+  .bar{
+    width:64px;height:3px;background:rgba(255,255,255,.09);display:inline-block;vertical-align:middle;margin-right:8px;
+  }
+  .bar i{display:block;height:100%;background:var(--acid)}
+  .bar i.r{background:var(--red)}
+  .st{font-size:9px;letter-spacing:.16em;text-transform:uppercase}
+  .st.ok{color:var(--acid)}
+  .st.off{color:var(--dim)}
+  .st.err{color:var(--red)}
+  .sw{
+    width:26px;height:13px;border:1px solid var(--line-2);background:none;position:relative;
+    cursor:pointer;padding:0;flex:0 0 auto;
+  }
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:5px;height:7px;background:var(--dim);transition:.15s}
+  .sw[aria-checked="true"]{border-color:var(--acid)}
+  .sw[aria-checked="true"]::after{left:15px;background:var(--acid)}
+
+  /* right rail */
+  .rail{border-left:1px solid var(--line);padding:22px 18px;overflow-y:auto}
+  .rail::-webkit-scrollbar{width:0}
+  .rail h4{font-size:9px;letter-spacing:.24em;text-transform:uppercase;color:var(--dim);margin-bottom:14px}
+  .kv{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px dotted rgba(255,255,255,.07);font-size:10.5px}
+  .kv .k2{color:var(--dim);letter-spacing:.06em}
+  .kv .v2{color:var(--ink);text-align:right}
+  .gauge-big{margin:6px 0 24px;text-align:center}
+  .gauge-big .pct{font-size:30px;font-weight:300;letter-spacing:-.04em;margin-top:-96px;position:relative;z-index:2}
+  .gauge-big .cap{font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);margin-top:64px}
+
+  .log{
+    margin-top:22px;border:1px solid var(--line);padding:10px;font-size:10px;line-height:1.85;
+    color:var(--dim);max-height:180px;overflow:hidden;
+  }
+  .log .t{color:var(--dim);margin-right:8px}
+  .log .ok{color:var(--acid)}
+  .log .w{color:#FFB020}
+  .log .e{color:var(--red)}
+
+  /* footer */
+  .foot{
+    border-top:1px solid var(--line);display:flex;align-items:center;gap:20px;
+    padding:0 18px;font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);
+    background:rgba(6,6,7,.85);
+  }
+  .foot .r{margin-left:auto;display:flex;gap:18px}
+  .foot b{color:var(--muted);font-weight:400}
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <!-- STATUS STRIP -->
+  <div class="strip">
+    <span class="brand">GNOUS</span>
+    <span class="sep">/</span>
+    <span>ThinkPad X1</span>
+    <span class="sep">/</span>
+    <span><span class="led"></span>session ok</span>
+    <span class="sep">/</span>
+    <span>wayland · gnome 46.2</span>
+    <div class="right">
+      <span>up 6d 14h</span>
+      <span>48°C</span>
+      <span>21:04:37</span>
+    </div>
+  </div>
+
+  <div class="body">
+    <!-- NAV -->
+    <nav class="nav">
+      <div class="sec">system</div>
+      <a href="#" class="on">overview<span>01</span></a>
+      <a href="#">processes<span>184</span></a>
+      <a href="#">sensors<span>06</span></a>
+      <a href="#">storage<span>04</span></a>
+      <div class="sec">desktop</div>
+      <a href="#">extensions<span>14</span></a>
+      <a href="#">appearance</a>
+      <a href="#">windows</a>
+      <a href="#">keybindings</a>
+      <a href="#">autostart</a>
+      <div class="sec">power</div>
+      <a href="#">power mgmt</a>
+      <a href="#">boot</a>
+      <div class="foot">
+        <div>pid 1 · systemd</div>
+        <div style="margin-top:5px">load 0.42 0.51 0.38</div>
+      </div>
+    </nav>
+
+    <!-- MAIN -->
+    <main class="main">
+      <div class="title-row">
+        <div>
+          <h1>Overview</h1>
+          <div class="path">/sys/state · 采集间隔 2000ms</div>
+        </div>
+        <div class="acts">
+          <button class="k">rescan</button>
+          <button class="k acid">apply</button>
+        </div>
+      </div>
+
+      <div class="readouts">
+        <div class="ro">
+          <div class="l">cpu load</div>
+          <div class="n">24<em>%</em></div>
+          <div class="m">12c · 4.2GHz · 1.8 avg</div>
+          <svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none">
+            <polyline points="0,16 8,14 16,15 24,10 32,12 40,8 48,11 56,6 64,9 72,5 80,8 88,4 100,7" fill="none" stroke="#C7F94B" stroke-width="1"/>
+          </svg>
+        </div>
+        <div class="ro">
+          <div class="l">memory</div>
+          <div class="n">11.2<em>GB</em></div>
+          <div class="m">of 32 · cache 3.4</div>
+          <svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none">
+            <polyline points="0,9 8,10 16,8 24,11 32,9 40,12 48,10 56,13 64,11 72,12 80,10 88,13 100,11" fill="none" stroke="#6E7076" stroke-width="1"/>
+          </svg>
+        </div>
+        <div class="ro">
+          <div class="l">root fs</div>
+          <div class="n">81<em>%</em></div>
+          <div class="m warn">418/512 · 94 GB free</div>
+          <svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none">
+            <polyline points="0,18 20,17 40,15 60,12 80,9 100,7" fill="none" stroke="#FF4D3D" stroke-width="1"/>
+          </svg>
+        </div>
+        <div class="ro">
+          <div class="l">battery</div>
+          <div class="n">82<em>%</em></div>
+          <div class="m">4h 12m · discharging</div>
+          <svg class="spark" viewBox="0 0 100 22" preserveAspectRatio="none">
+            <polyline points="0,3 20,5 40,7 60,9 80,11 100,13" fill="none" stroke="#C7F94B" stroke-width="1" opacity=".7"/>
+          </svg>
+        </div>
+      </div>
+
+      <!-- PROCESSES -->
+      <div class="block">
+        <div class="block-h"><span>top processes by cpu</span><span class="r">refresh 2s · sorted</span></div>
+        <table>
+          <thead><tr><th>name</th><th>pid</th><th>user</th><th class="num">cpu</th><th class="num">mem</th><th>state</th></tr></thead>
+          <tbody>
+            <tr><td class="name">gnome-shell</td><td>1842</td><td>gx</td><td class="num"><span class="bar"><i style="width:42%"></i></span>8.4%</td><td class="num">412 MB</td><td><span class="st ok">running</span></td></tr>
+            <tr><td class="name">firefox</td><td>9210</td><td>gx</td><td class="num"><span class="bar"><i style="width:30%"></i></span>6.1%</td><td class="num">1.8 GB</td><td><span class="st off">sleep</span></td></tr>
+            <tr><td class="name">btrfs-scrub</td><td>44102</td><td>root</td><td class="num"><span class="bar"><i class="r" style="width:11%"></i></span>2.2%</td><td class="num">86 MB</td><td><span class="st err">io wait</span></td></tr>
+            <tr><td class="name">pipewire</td><td>2103</td><td>gx</td><td class="num"><span class="bar"><i style="width:2%"></i></span>0.4%</td><td class="num">62 MB</td><td><span class="st off">sleep</span></td></tr>
+            <tr><td class="name">tracker-miner-fs</td><td>3180</td><td>gx</td><td class="num"><span class="bar"><i style="width:1%"></i></span>0.2%</td><td class="num">118 MB</td><td><span class="st off">sleep</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- EXTENSIONS -->
+      <div class="block">
+        <div class="block-h"><span>extensions · 14 installed</span><span class="r">gnome-shell 46</span></div>
+        <table>
+          <thead><tr><th>id</th><th>version</th><th>state</th><th class="num">enable</th></tr></thead>
+          <tbody>
+            <tr><td class="name">dash-to-dock@micxgx.gmail.com</td><td>79</td><td><span class="st ok">active</span></td><td class="num"><button class="sw" aria-checked="true"></button></td></tr>
+            <tr><td class="name">blur-my-shell@aunetx</td><td>57</td><td><span class="st ok">active</span></td><td class="num"><button class="sw" aria-checked="true"></button></td></tr>
+            <tr><td class="name">vitals@corecoding.com</td><td>73</td><td><span class="st err">sensor fail</span></td><td class="num"><button class="sw" aria-checked="true"></button></td></tr>
+            <tr><td class="name">just-perfection@justperfection</td><td>26</td><td><span class="st off">disabled</span></td><td class="num"><button class="sw" aria-checked="false"></button></td></tr>
+            <tr><td class="name">clipboard-indicator@tudmotu</td><td>54</td><td><span class="st ok">active</span></td><td class="num"><button class="sw" aria-checked="true"></button></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- DEVICES -->
+      <div class="block">
+        <div class="block-h"><span>block devices</span><span class="r">btrfs · lvm</span></div>
+        <table>
+          <thead><tr><th>device</th><th>mount</th><th>fs</th><th class="num">used</th><th>health</th></tr></thead>
+          <tbody>
+            <tr><td class="name">nvme0n1p3</td><td>/</td><td>btrfs</td><td class="num">418 / 512 GB</td><td><span class="st ok">ok</span></td></tr>
+            <tr><td class="name">nvme0n1p1</td><td>/boot/efi</td><td>vfat</td><td class="num">212 / 512 MB</td><td><span class="st ok">ok</span></td></tr>
+            <tr><td class="name">sda1</td><td>/mnt/archive</td><td>ext4</td><td class="num">1.8 / 2.0 TB</td><td><span class="st ok">ok</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </main>
+
+    <!-- RIGHT RAIL -->
+    <aside class="rail">
+      <h4>disk usage</h4>
+      <div class="gauge-big">
+        <svg viewBox="0 0 120 120" style="width:130px;height:130px;transform:rotate(-90deg)">
+          <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="6"/>
+          <circle cx="60" cy="60" r="52" fill="none" stroke="#C7F94B" stroke-width="6"
+                  stroke-dasharray="327" stroke-dashoffset="62" stroke-linecap="butt"/>
+        </svg>
+        <div class="pct">81%</div>
+        <div class="cap">418 / 512 GB</div>
+      </div>
+
+      <h4>session</h4>
+      <div class="kv"><span class="k2">display</span><span class="v2">2560×1600 @120</span></div>
+      <div class="kv"><span class="k2">compositor</span><span class="v2">mutter 46.2</span></div>
+      <div class="kv"><span class="k2">scale</span><span class="v2">1.5x</span></div>
+      <div class="kv"><span class="k2">theme</span><span class="v2">obsidian</span></div>
+      <div class="kv"><span class="k2">font</span><span class="v2">inter 11pt</span></div>
+      <div class="kv"><span class="k2">gpu</span><span class="v2">iris xe</span></div>
+
+      <h4 style="margin-top:24px">sensors</h4>
+      <div class="kv"><span class="k2">cpu pkg</span><span class="v2">48°C</span></div>
+      <div class="kv"><span class="k2">nvme</span><span class="v2">41°C</span></div>
+      <div class="kv"><span class="k2">fan</span><span class="v2">2100 rpm</span></div>
+      <div class="kv"><span class="k2">power</span><span class="v2">11.4 W</span></div>
+
+      <h4 style="margin-top:24px">recent log</h4>
+      <div class="log">
+        <div><span class="t">21:02</span><span class="ok">ok</span> session started</div>
+        <div><span class="t">21:01</span><span class="w">warn</span> vitals: no sensor</div>
+        <div><span class="t">20:58</span><span class="ok">ok</span> ext enabled ×3</div>
+        <div><span class="t">20:44</span><span class="e">err</span> scrub io wait</div>
+        <div><span class="t">20:31</span><span class="ok">ok</span> theme applied</div>
+        <div><span class="t">20:12</span><span class="ok">ok</span> net 5GHz joined</div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="foot">
+    <span>gnous <b>0.1.0-dev</b></span>
+    <span>·</span>
+    <span>dbus <b>connected</b></span>
+    <span>·</span>
+    <span>settings-daemon <b>active</b></span>
+    <div class="r">
+      <span>↑↓ navigate</span>
+      <span>⏎ select</span>
+      <span>esc back</span>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll('.nav a').forEach(a=>{
+    a.addEventListener('click',e=>{
+      e.preventDefault();
+      document.querySelectorAll('.nav a').forEach(x=>x.classList.remove('on'));
+      a.classList.add('on');
+    });
+  });
+  document.querySelectorAll('.sw').forEach(b=>{
+    b.addEventListener('click',()=>{
+      b.setAttribute('aria-checked', b.getAttribute('aria-checked')==='true'?'false':'true');
+    });
+  });
+  const clock=document.querySelector('.strip .right span:last-child');
+  setInterval(()=>{
+    const d=new Date();
+    clock.textContent=[d.getHours(),d.getMinutes(),d.getSeconds()].map(n=>String(n).padStart(2,'0')).join(':');
+  },1000);
+</script>
+</body>
+</html>
