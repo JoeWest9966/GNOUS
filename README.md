@@ -9,7 +9,10 @@
 
 ## 当前进度
 
-**A · Control Deck 静态外观**（`demo/ui-directions/a-cockpit.html`）已用 Rust + GPUI 1:1 复刻，暂无任何功能逻辑。
+**A · Control Deck**（`demo/ui-directions/a-cockpit.html`）已用 Rust + GPUI 复刻，概览页已接入真实系统数据：
+主机名 / 会话 / 运行时长 / 时钟，以及 CPU、内存、根分区、网络四项指标，每秒从 procfs·sysfs 重新采样。
+
+其余区块（扩展、开关、进程、启动器）仍是静态占位。
 
 ![GNOUS 渲染](docs/gnous.png)
 
@@ -25,9 +28,13 @@ cargo run
 ```
 src/
 ├── main.rs    # 窗口、图标栏、顶栏、概览各区块的布局
+├── sys.rs     # 只读系统采样（procfs / sysfs + statvfs），输出一帧 Snapshot
 ├── theme.rs   # 设计 token（颜色 / 字体 / 字距 / 行高）与文本辅助函数
 └── icons.rs   # 内联 SVG 线性图标（stroke 1.3，与 demo 完全一致）
 ```
+
+采样很快（全是 procfs/sysfs 小文件读取），所以刷新循环直接跑在 UI 线程上，
+每秒一次，不引入额外线程或锁。
 
 复刻时的几个关键处理：
 

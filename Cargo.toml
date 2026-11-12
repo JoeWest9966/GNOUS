@@ -6,3 +6,4 @@ publish = false
 
 [dependencies]
 gpui-kit = "0.9"
+libc = "0.2"

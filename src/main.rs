@@ -1,12 +1,13 @@
 mod icons;
+mod sys;
 mod theme;
 
 use std::time::{Duration, Instant};
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AppContext as _, Bounds, Context, Div, FontWeight, Hsla, InteractiveElement as _,
-    IntoElement, MouseButton, ParentElement as _, PathBuilder, Point, Render, ResizeEdge,
+    AppContext as _, Bounds, Context, Div, FontWeight, Hsla, InteractiveElement as _, IntoElement,
+    MouseButton, ParentElement as _, PathBuilder, Point, Render, ResizeEdge,
     StatefulInteractiveElement as _, Styled, TitlebarOptions, Window, WindowBounds,
     WindowDecorations, WindowOptions, canvas, div, point, px, relative, rgba, size,
 };
@@ -23,16 +24,48 @@ use theme::{
 const DOUBLE_CLICK: Duration = Duration::from_millis(320);
 const DRAG_THRESHOLD: f32 = 4.;
 
-#[derive(Default)]
 struct App {
+    probe: sys::Probe,
+    snap: sys::Snapshot,
     last_click: Option<Instant>,
     drag_anchor: Option<Point<gpui_kit::Pixels>>,
 }
 
+/// How often the overview re-samples the machine.
+const REFRESH: Duration = Duration::from_secs(1);
+
+impl App {
+    fn new(cx: &mut Context<Self>) -> Self {
+        let mut probe = sys::Probe::new();
+        let snap = probe.sample();
+        // Sampling runs on the UI thread: every probe is a procfs/sysfs read,
+        // so a tick costs microseconds and never races the render.
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(REFRESH).await;
+                let alive = this
+                    .update(cx, |app, cx| {
+                        app.snap = app.probe.sample();
+                        cx.notify();
+                    })
+                    .is_ok();
+                if !alive {
+                    break;
+                }
+            }
+        })
+        .detach();
+        Self {
+            probe,
+            snap,
+            last_click: None,
+            drag_anchor: None,
+        }
+    }
+}
 impl Render for App {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        h()
-            .relative()
+        h().relative()
             .size_full()
             .items_stretch()
             .bg(black())
@@ -40,12 +73,11 @@ impl Render for App {
             .text_color(text())
             .child(rail())
             .child(
-                v()
-                    .flex_1()
+                v().flex_1()
                     .min_w_0()
                     .min_h_0()
                     .child(self.topbar(cx))
-                    .child(content()),
+                    .child(content(&self.snap)),
             )
             .child(resize_grips())
     }
@@ -56,8 +88,7 @@ impl Render for App {
 // ============================================================================
 
 fn rail() -> Div {
-    v()
-        .w(px(68.))
+    v().w(px(68.))
         .flex_shrink_0()
         .items_center()
         .py(px(22.))
@@ -120,46 +151,52 @@ impl App {
         let weak_down = cx.entity().downgrade();
         let weak_move = cx.entity().downgrade();
         let weak_up = cx.entity().downgrade();
+        let snap = &self.snap;
 
-        h()
-            .id("titlebar")
+        h().id("titlebar")
             .h(px(56.))
-        .flex_shrink_0()
-        .items_center()
-        .gap(px(34.))
-        .px(px(40.))
-        .border_b(px(1.))
-        .border_color(line())
-        .child(tracked("GNOUS", 13., FontWeight::MEDIUM, text(), 0.34))
-        .child(
-            h()
-                .h_full()
-                .items_stretch()
-                .gap(px(30.))
-                .child(nav_item("Overview", true))
-                .child(nav_item("Extensions", false))
-                .child(nav_item("Appearance", false))
-                .child(nav_item("Windows", false))
-                .child(nav_item("Power", false)),
-        )
-        .child(div().flex_1())
+            .flex_shrink_0()
+            .items_center()
+            .gap(px(34.))
+            .px(px(40.))
+            .border_b(px(1.))
+            .border_color(line())
+            .child(tracked("GNOUS", 13., FontWeight::MEDIUM, text(), 0.34))
             .child(
-                h()
-                    .items_center()
+                h().h_full()
+                    .items_stretch()
+                    .gap(px(30.))
+                    .child(nav_item("Overview", true))
+                    .child(nav_item("Extensions", false))
+                    .child(nav_item("Appearance", false))
+                    .child(nav_item("Windows", false))
+                    .child(nav_item("Power", false)),
+            )
+            .child(div().flex_1())
+            .child(
+                h().items_center()
                     .gap(px(22.))
                     .text_size(px(12.))
                     .text_color(muted())
                     .child(
-                        h()
-                            .items_center()
+                        h().items_center()
                             .gap(px(7.))
-                            .child(div().size(px(5.)).rounded_full().bg(ok()))
-                            .child(div().child("System nominal")),
+                            .child(div().size(px(5.)).rounded_full().bg(if snap.healthy {
+                                ok()
+                            } else {
+                                warn()
+                            }))
+                            .child(div().child(if snap.healthy {
+                                "System nominal"
+                            } else {
+                                "System attention"
+                            })),
                     )
-                    .child(div().child("GNOME 46 · Wayland"))
-                    .child(div().text_color(text()).child("21:04")),
+                    .child(div().child(snap.session.clone()))
+                    .child(div().text_color(text()).child(snap.clock.clone())),
             )
             .on_mouse_down(MouseButton::Left, move |event, window, cx| {
+                eprintln!("DBG down at {:?}", event.position);
                 let now = Instant::now();
                 let mut zoom = false;
                 let _ = weak_down.update(cx, |this, _| {
@@ -180,6 +217,10 @@ impl App {
                 }
             })
             .on_mouse_move(move |event, window, cx| {
+                eprintln!(
+                    "DBG move {:?} pressed={:?}",
+                    event.position, event.pressed_button
+                );
                 if event.pressed_button != Some(MouseButton::Left) {
                     return;
                 }
@@ -188,7 +229,8 @@ impl App {
                     if let Some(anchor) = this.drag_anchor {
                         let moved = (event.position.x.as_f32() - anchor.x.as_f32()).abs()
                             > DRAG_THRESHOLD
-                            || (event.position.y.as_f32() - anchor.y.as_f32()).abs() > DRAG_THRESHOLD;
+                            || (event.position.y.as_f32() - anchor.y.as_f32()).abs()
+                                > DRAG_THRESHOLD;
                         if moved {
                             this.drag_anchor = None;
                             begin_move = true;
@@ -196,6 +238,7 @@ impl App {
                     }
                 });
                 if begin_move {
+                    eprintln!("DBG start_window_move");
                     window.start_window_move();
                 }
             })
@@ -242,11 +285,7 @@ fn resize_grips() -> impl IntoElement {
         }))
 }
 
-fn grip(
-    id: &'static str,
-    edge: ResizeEdge,
-    place: impl FnOnce(Div) -> Div,
-) -> impl IntoElement {
+fn grip(id: &'static str, edge: ResizeEdge, place: impl FnOnce(Div) -> Div) -> impl IntoElement {
     place(div().absolute())
         .id(id)
         .on_mouse_down(MouseButton::Left, move |_, window, _| {
@@ -269,9 +308,8 @@ fn nav_item(label: &str, active: bool) -> Div {
 // Scrollable content
 // ============================================================================
 
-fn content() -> impl IntoElement {
-    v()
-        .id("content")
+fn content(snap: &sys::Snapshot) -> impl IntoElement {
+    v().id("content")
         .flex_1()
         .min_h_0()
         .overflow_y_scroll()
@@ -279,8 +317,8 @@ fn content() -> impl IntoElement {
         .pr(px(52.))
         .pt(px(52.))
         .pb(px(64.))
-        .child(hero())
-        .child(metrics())
+        .child(hero(snap))
+        .child(metrics(snap))
         .child(section_head("扩展与开关", "管理全部 14 项 →"))
         .child(panels())
         .child(section_head("资源热点", "打开任务管理器 →"))
@@ -289,40 +327,26 @@ fn content() -> impl IntoElement {
         .child(apps())
 }
 
-fn hero() -> Div {
-    h()
-        .items_end()
+fn hero(snap: &sys::Snapshot) -> Div {
+    h().items_end()
         .justify_between()
         .mb(px(56.))
         .child(
-            v()
-                .child(
-                    caps(
-                        "Session · ThinkPad X1 · Wayland",
-                        11.,
-                        FontWeight::NORMAL,
-                        dim(),
-                        0.26,
-                    )
-                    .mb(px(14.)),
+            v().child(
+                caps(
+                    &format!("Session · {} · {}", snap.hostname, snap.session_kind),
+                    11.,
+                    FontWeight::NORMAL,
+                    dim(),
+                    0.26,
                 )
-                .child(
-                    txt("系统运行正常", 44., FontWeight::EXTRA_LIGHT, text())
-                        .line_height(px(46.)),
-                )
-                .child(
-                    txt(
-                        "已连续运行 6 天 14 小时 · 上次更新于 3 小时前",
-                        13.,
-                        FontWeight::NORMAL,
-                        muted(),
-                    )
-                    .mt(px(12.)),
-                ),
+                .mb(px(14.)),
+            )
+            .child(txt(snap.headline, 44., FontWeight::EXTRA_LIGHT, text()).line_height(px(46.)))
+            .child(txt(snap.detail.clone(), 13., FontWeight::NORMAL, muted()).mt(px(12.))),
         )
         .child(
-            h()
-                .items_center()
+            h().items_center()
                 .gap(px(10.))
                 .child(button("扫描更新", false))
                 .child(button("重启会话", true)),
@@ -365,17 +389,16 @@ fn button(label: &'static str, solid: bool) -> impl IntoElement {
 
 struct Metric {
     label: &'static str,
-    value: &'static str,
-    unit: &'static str,
+    value: String,
+    unit: String,
     fill: f32,
     hot: bool,
-    left: &'static str,
-    right: &'static str,
+    left: String,
+    right: String,
 }
 
-fn metrics() -> Div {
-    h()
-        .items_stretch()
+fn metrics(snap: &sys::Snapshot) -> Div {
+    h().items_stretch()
         .border_t(px(1.))
         .border_color(line())
         .mb(px(58.))
@@ -383,55 +406,54 @@ fn metrics() -> Div {
             0,
             Metric {
                 label: "CPU 负载",
-                value: "24",
-                unit: "%",
-                fill: 0.24,
-                hot: false,
-                left: "12 核 · 4.2 GHz",
-                right: "48°C",
+                value: snap.cpu_value.clone(),
+                unit: "%".into(),
+                fill: snap.cpu_fill,
+                hot: snap.cpu_fill >= 0.85,
+                left: snap.cpu_left.clone(),
+                right: snap.cpu_right.clone(),
             },
         ))
         .child(metric(
             1,
             Metric {
                 label: "内存",
-                value: "11.2",
-                unit: "/ 32 GB",
-                fill: 0.35,
-                hot: false,
-                left: "SWAP 0.4 GB",
-                right: "35%",
+                value: snap.mem_value.clone(),
+                unit: snap.mem_unit.clone(),
+                fill: snap.mem_fill,
+                hot: snap.mem_fill >= 0.85,
+                left: snap.mem_left.clone(),
+                right: snap.mem_right.clone(),
             },
         ))
         .child(metric(
             2,
             Metric {
                 label: "存储 · 根分区",
-                value: "418",
-                unit: "/ 512 GB",
-                fill: 0.81,
-                hot: true,
-                left: "Btrfs · NVMe",
-                right: "剩余 94 GB",
+                value: snap.disk_value.clone(),
+                unit: snap.disk_unit.clone(),
+                fill: snap.disk_fill,
+                hot: snap.disk_fill >= 0.8,
+                left: snap.disk_left.clone(),
+                right: snap.disk_right.clone(),
             },
         ))
         .child(metric(
             3,
             Metric {
                 label: "网络",
-                value: "2.4",
-                unit: "MB/s",
-                fill: 0.42,
+                value: snap.net_value.clone(),
+                unit: snap.net_unit.clone(),
+                fill: snap.net_fill,
                 hot: false,
-                left: "Wi-Fi 6E",
-                right: "↓ 2.4 ↑ 0.3",
+                left: snap.net_left.clone(),
+                right: snap.net_right.clone(),
             },
         ))
 }
 
 fn metric(index: usize, m: Metric) -> Div {
-    v()
-        .w(relative(0.25))
+    v().w(relative(0.25))
         .min_w_0()
         .pt(px(30.))
         .pb(px(26.))
@@ -441,12 +463,9 @@ fn metric(index: usize, m: Metric) -> Div {
         })
         .child(caps(m.label, 10.5, FontWeight::NORMAL, dim(), 0.22).mb(px(22.)))
         .child(
-            h()
-                .items_end()
+            h().items_end()
                 .gap(px(8.))
-                .child(
-                    txt(m.value, 52., FontWeight::EXTRA_LIGHT, text()).line_height(px(52.)),
-                )
+                .child(txt(m.value, 52., FontWeight::EXTRA_LIGHT, text()).line_height(px(52.)))
                 .child(
                     txt(m.unit, 15., FontWeight::LIGHT, muted())
                         .line_height(px(18.))
@@ -459,16 +478,14 @@ fn metric(index: usize, m: Metric) -> Div {
                 .w_full()
                 .mt(px(24.))
                 .bg(line_strong())
-                .child(
-                    div()
-                        .h_full()
-                        .w(relative(m.fill))
-                        .bg(if m.hot { accent() } else { text() }),
-                ),
+                .child(div().h_full().w(relative(m.fill)).bg(if m.hot {
+                    accent()
+                } else {
+                    text()
+                })),
         )
         .child(
-            h()
-                .justify_between()
+            h().justify_between()
                 .mt(px(11.))
                 .text_size(px(10.5))
                 .text_color(dim())
@@ -482,8 +499,7 @@ fn metric(index: usize, m: Metric) -> Div {
 // ============================================================================
 
 fn section_head(title: &str, link: &str) -> Div {
-    h()
-        .items_end()
+    h().items_end()
         .justify_between()
         .mb(px(22.))
         .child(caps(title, 12., FontWeight::MEDIUM, muted(), 0.24))
@@ -495,16 +511,14 @@ fn section_head(title: &str, link: &str) -> Div {
 // ============================================================================
 
 fn panels() -> Div {
-    h()
-        .items_stretch()
+    h().items_stretch()
         .gap(px(1.))
         .bg(line())
         .border(px(1.))
         .border_color(line())
         .mb(px(58.))
         .child(
-            v()
-                .w(relative(0.574))
+            v().w(relative(0.574))
                 .min_w_0()
                 .bg(black())
                 .pt(px(30.))
@@ -552,20 +566,13 @@ fn panels() -> Div {
                 )),
         )
         .child(
-            v()
-                .flex_1()
+            v().flex_1()
                 .min_w_0()
                 .bg(black())
                 .pt(px(30.))
                 .pb(px(30.))
                 .px(px(28.))
-                .child(toggle_row(
-                    0,
-                    "深色界面",
-                    "Prefer dark · 全局",
-                    true,
-                    false,
-                ))
+                .child(toggle_row(0, "深色界面", "Prefer dark · 全局", true, false))
                 .child(toggle_row(1, "勿扰模式", "屏蔽全部通知", false, false))
                 .child(toggle_row(
                     2,
@@ -599,13 +606,10 @@ fn ext_row(
     status: &'static str,
     status_color: Hsla,
 ) -> Div {
-    h()
-        .items_center()
+    h().items_center()
         .gap(px(16.))
         .py(px(15.))
-        .when(index < 4, |this| {
-            this.border_b(px(1.)).border_color(line())
-        })
+        .when(index < 4, |this| this.border_b(px(1.)).border_color(line()))
         .child(
             div()
                 .w(px(30.))
@@ -619,8 +623,7 @@ fn ext_row(
                 .child(icons::icon(svg, 14., muted())),
         )
         .child(
-            v()
-                .flex_1()
+            v().flex_1()
                 .min_w_0()
                 .child(txt(name, 13., FontWeight::NORMAL, text()))
                 .child(txt(meta, 10.5, FontWeight::NORMAL, dim()).mt(px(3.))),
@@ -629,16 +632,12 @@ fn ext_row(
 }
 
 fn toggle_row(index: usize, title: &str, desc: &str, on: bool, last: bool) -> Div {
-    h()
-        .items_center()
+    h().items_center()
         .justify_between()
         .py(px(16.))
-        .when(!last, |this| {
-            this.border_b(px(1.)).border_color(line())
-        })
+        .when(!last, |this| this.border_b(px(1.)).border_color(line()))
         .child(
-            v()
-                .child(txt(title, 13., FontWeight::NORMAL, text()))
+            v().child(txt(title, 13., FontWeight::NORMAL, text()))
                 .child(txt(desc, 11., FontWeight::NORMAL, dim()).mt(px(4.))),
         )
         .child(switch(index, on))
@@ -676,16 +675,14 @@ fn switch(id: usize, on: bool) -> impl IntoElement {
 // ============================================================================
 
 fn processes() -> Div {
-    v()
-        .border(px(1.))
+    v().border(px(1.))
         .border_color(line())
         .pt(px(26.))
         .pb(px(26.))
         .px(px(28.))
         .mb(px(58.))
         .child(
-            h()
-                .items_end()
+            h().items_end()
                 .pb(px(14.))
                 .border_b(px(1.))
                 .border_color(line())
@@ -699,27 +696,27 @@ fn processes() -> Div {
                         .w(px(160.))
                         .child(caps("状态", 10., FontWeight::MEDIUM, dim(), 0.2)),
                 )
-                .child(
-                    div()
-                        .w(px(162.))
-                        .flex()
-                        .justify_end()
-                        .child(caps("CPU", 10., FontWeight::MEDIUM, dim(), 0.2)),
-                )
-                .child(
-                    div()
-                        .w(px(162.))
-                        .flex()
-                        .justify_end()
-                        .child(caps("内存", 10., FontWeight::MEDIUM, dim(), 0.2)),
-                )
-                .child(
-                    div()
-                        .w(px(240.))
-                        .flex()
-                        .justify_end()
-                        .child(caps("趋势", 10., FontWeight::MEDIUM, dim(), 0.2)),
-                ),
+                .child(div().w(px(162.)).flex().justify_end().child(caps(
+                    "CPU",
+                    10.,
+                    FontWeight::MEDIUM,
+                    dim(),
+                    0.2,
+                )))
+                .child(div().w(px(162.)).flex().justify_end().child(caps(
+                    "内存",
+                    10.,
+                    FontWeight::MEDIUM,
+                    dim(),
+                    0.2,
+                )))
+                .child(div().w(px(240.)).flex().justify_end().child(caps(
+                    "趋势",
+                    10.,
+                    FontWeight::MEDIUM,
+                    dim(),
+                    0.2,
+                ))),
         )
         .child(process_row(
             0,
@@ -779,27 +776,24 @@ fn process_row(
                 .w(px(160.))
                 .child(caps(state, 10.5, FontWeight::NORMAL, state_color, 0.14)),
         )
-        .child(
-            div()
-                .w(px(162.))
-                .flex()
-                .justify_end()
-                .child(txt(cpu, 12.5, FontWeight::NORMAL, muted())),
-        )
-        .child(
-            div()
-                .w(px(162.))
-                .flex()
-                .justify_end()
-                .child(txt(mem, 12.5, FontWeight::NORMAL, muted())),
-        )
-        .child(
-            div()
-                .w(px(240.))
-                .flex()
-                .justify_end()
-                .child(sparkline(spark, 64., 16., rgba(0xffffffb3))),
-        )
+        .child(div().w(px(162.)).flex().justify_end().child(txt(
+            cpu,
+            12.5,
+            FontWeight::NORMAL,
+            muted(),
+        )))
+        .child(div().w(px(162.)).flex().justify_end().child(txt(
+            mem,
+            12.5,
+            FontWeight::NORMAL,
+            muted(),
+        )))
+        .child(div().w(px(240.)).flex().justify_end().child(sparkline(
+            spark,
+            64.,
+            16.,
+            rgba(0xffffffb3),
+        )))
 }
 
 fn process_row_flat(
@@ -818,20 +812,18 @@ fn process_row_flat(
                 .w(px(160.))
                 .child(caps(state, 10.5, FontWeight::NORMAL, state_color, 0.14)),
         )
-        .child(
-            div()
-                .w(px(162.))
-                .flex()
-                .justify_end()
-                .child(txt(cpu, 12.5, FontWeight::NORMAL, muted())),
-        )
-        .child(
-            div()
-                .w(px(162.))
-                .flex()
-                .justify_end()
-                .child(txt(mem, 12.5, FontWeight::NORMAL, muted())),
-        )
+        .child(div().w(px(162.)).flex().justify_end().child(txt(
+            cpu,
+            12.5,
+            FontWeight::NORMAL,
+            muted(),
+        )))
+        .child(div().w(px(162.)).flex().justify_end().child(txt(
+            mem,
+            12.5,
+            FontWeight::NORMAL,
+            muted(),
+        )))
         .child(
             div()
                 .w(px(240.))
@@ -842,17 +834,13 @@ fn process_row_flat(
 }
 
 fn process_row_base(index: usize) -> Div {
-    h()
-        .items_center()
-        .py(px(14.))
-        .when(index < 3, |this| {
-            this.border_b(px(1.)).border_color(line_faint())
-        })
+    h().items_center().py(px(14.)).when(index < 3, |this| {
+        this.border_b(px(1.)).border_color(line_faint())
+    })
 }
 
 fn name_cell(name: &'static str, pid: &'static str) -> Div {
-    h()
-        .flex_1()
+    h().flex_1()
         .min_w_0()
         .items_center()
         .gap(px(8.))
@@ -911,10 +899,7 @@ fn sparkline(
             let sy = bounds.size.height.as_f32() / height;
             let mut builder = PathBuilder::stroke(px(1.));
             for (i, (x, y)) in points.iter().enumerate() {
-                let p = point(
-                    bounds.origin.x + px(x * sx),
-                    bounds.origin.y + px(y * sy),
-                );
+                let p = point(bounds.origin.x + px(x * sx), bounds.origin.y + px(y * sy));
                 if i == 0 {
                     builder.move_to(p);
                 } else {
@@ -944,15 +929,13 @@ const APPS: [(&str, &str); 6] = [
 ];
 
 fn apps() -> Div {
-    h()
-        .items_stretch()
+    h().items_stretch()
         .gap(px(1.))
         .bg(line())
         .border(px(1.))
         .border_color(line())
         .children(APPS.iter().enumerate().map(|(i, (mark, name))| {
-            v()
-                .id(("app", i))
+            v().id(("app", i))
                 .flex_1()
                 .min_w_0()
                 .items_center()
@@ -1019,7 +1002,7 @@ fn main() {
                 ..Default::default()
             },
             cx,
-            |_, cx| cx.new(|_| App::default()),
+            |_, cx| cx.new(App::new),
         )
         .expect("failed to open window");
     });
