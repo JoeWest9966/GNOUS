@@ -1,12 +1,14 @@
 mod icons;
 mod theme;
 
+use std::time::{Duration, Instant};
+
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AppContext as _, Bounds, Context, Div, FontWeight, Hsla, InteractiveElement as _,
-    IntoElement, ParentElement as _, PathBuilder, Render, StatefulInteractiveElement as _,
-    Styled, TitlebarOptions, Window, WindowBounds, WindowOptions, canvas, div, point, px, relative,
-    rgba, size,
+    IntoElement, MouseButton, ParentElement as _, PathBuilder, Point, Render, ResizeEdge,
+    StatefulInteractiveElement as _, Styled, TitlebarOptions, Window, WindowBounds,
+    WindowDecorations, WindowOptions, canvas, div, point, px, relative, rgba, size,
 };
 use theme::{
     FONT, accent, accent_hover, alpha, black, caps, dim, h, line, line_faint, line_strong, muted,
@@ -17,11 +19,20 @@ use theme::{
 // App
 // ============================================================================
 
-struct App;
+/// Window chrome state: press tracking for drag + double-click-to-zoom.
+const DOUBLE_CLICK: Duration = Duration::from_millis(320);
+const DRAG_THRESHOLD: f32 = 4.;
+
+#[derive(Default)]
+struct App {
+    last_click: Option<Instant>,
+    drag_anchor: Option<Point<gpui_kit::Pixels>>,
+}
 
 impl Render for App {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         h()
+            .relative()
             .size_full()
             .items_stretch()
             .bg(black())
@@ -33,9 +44,10 @@ impl Render for App {
                     .flex_1()
                     .min_w_0()
                     .min_h_0()
-                    .child(topbar())
+                    .child(self.topbar(cx))
                     .child(content()),
             )
+            .child(resize_grips())
     }
 }
 
@@ -100,9 +112,18 @@ fn rail_button(id: &'static str, svg: &'static str, active: bool) -> impl IntoEl
 // Top bar
 // ============================================================================
 
-fn topbar() -> Div {
-    h()
-        .h(px(56.))
+impl App {
+    /// The 56px header doubles as the window titlebar: drag to move the window,
+    /// double-click to zoom (maximize/restore), right-click for the native
+    /// GNOME window menu.
+    fn topbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let weak_down = cx.entity().downgrade();
+        let weak_move = cx.entity().downgrade();
+        let weak_up = cx.entity().downgrade();
+
+        h()
+            .id("titlebar")
+            .h(px(56.))
         .flex_shrink_0()
         .items_center()
         .gap(px(34.))
@@ -122,22 +143,115 @@ fn topbar() -> Div {
                 .child(nav_item("Power", false)),
         )
         .child(div().flex_1())
-        .child(
-            h()
-                .items_center()
-                .gap(px(22.))
-                .text_size(px(12.))
-                .text_color(muted())
-                .child(
-                    h()
-                        .items_center()
-                        .gap(px(7.))
-                        .child(div().size(px(5.)).rounded_full().bg(ok()))
-                        .child(div().child("System nominal")),
-                )
-                .child(div().child("GNOME 46 · Wayland"))
-                .child(div().text_color(text()).child("21:04")),
-        )
+            .child(
+                h()
+                    .items_center()
+                    .gap(px(22.))
+                    .text_size(px(12.))
+                    .text_color(muted())
+                    .child(
+                        h()
+                            .items_center()
+                            .gap(px(7.))
+                            .child(div().size(px(5.)).rounded_full().bg(ok()))
+                            .child(div().child("System nominal")),
+                    )
+                    .child(div().child("GNOME 46 · Wayland"))
+                    .child(div().text_color(text()).child("21:04")),
+            )
+            .on_mouse_down(MouseButton::Left, move |event, window, cx| {
+                let now = Instant::now();
+                let mut zoom = false;
+                let _ = weak_down.update(cx, |this, _| {
+                    let double = this
+                        .last_click
+                        .is_some_and(|at| now.duration_since(at) < DOUBLE_CLICK);
+                    if double {
+                        this.last_click = None;
+                        this.drag_anchor = None;
+                        zoom = true;
+                    } else {
+                        this.last_click = Some(now);
+                        this.drag_anchor = Some(event.position);
+                    }
+                });
+                if zoom {
+                    window.zoom_window();
+                }
+            })
+            .on_mouse_move(move |event, window, cx| {
+                if event.pressed_button != Some(MouseButton::Left) {
+                    return;
+                }
+                let mut begin_move = false;
+                let _ = weak_move.update(cx, |this, _| {
+                    if let Some(anchor) = this.drag_anchor {
+                        let moved = (event.position.x.as_f32() - anchor.x.as_f32()).abs()
+                            > DRAG_THRESHOLD
+                            || (event.position.y.as_f32() - anchor.y.as_f32()).abs() > DRAG_THRESHOLD;
+                        if moved {
+                            this.drag_anchor = None;
+                            begin_move = true;
+                        }
+                    }
+                });
+                if begin_move {
+                    window.start_window_move();
+                }
+            })
+            .on_mouse_up(MouseButton::Left, move |_, _, cx| {
+                let _ = weak_up.update(cx, |this, _| this.drag_anchor = None);
+            })
+            .on_mouse_down(MouseButton::Right, |event, window, _| {
+                window.show_window_menu(event.position);
+            })
+    }
+}
+
+/// Invisible resize grips for the client-side-decorated window edges.
+fn resize_grips() -> impl IntoElement {
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .right_0()
+        .bottom_0()
+        .child(grip("rz-top", ResizeEdge::Top, |d| {
+            d.top_0().left(px(12.)).right(px(12.)).h(px(5.))
+        }))
+        .child(grip("rz-bottom", ResizeEdge::Bottom, |d| {
+            d.bottom_0().left(px(12.)).right(px(12.)).h(px(5.))
+        }))
+        .child(grip("rz-left", ResizeEdge::Left, |d| {
+            d.left_0().top(px(12.)).bottom(px(12.)).w(px(5.))
+        }))
+        .child(grip("rz-right", ResizeEdge::Right, |d| {
+            d.right_0().top(px(12.)).bottom(px(12.)).w(px(5.))
+        }))
+        .child(grip("rz-top-left", ResizeEdge::TopLeft, |d| {
+            d.top_0().left_0().size(px(12.))
+        }))
+        .child(grip("rz-top-right", ResizeEdge::TopRight, |d| {
+            d.top_0().right_0().size(px(12.))
+        }))
+        .child(grip("rz-bottom-left", ResizeEdge::BottomLeft, |d| {
+            d.bottom_0().left_0().size(px(12.))
+        }))
+        .child(grip("rz-bottom-right", ResizeEdge::BottomRight, |d| {
+            d.bottom_0().right_0().size(px(12.))
+        }))
+}
+
+fn grip(
+    id: &'static str,
+    edge: ResizeEdge,
+    place: impl FnOnce(Div) -> Div,
+) -> impl IntoElement {
+    place(div().absolute())
+        .id(id)
+        .on_mouse_down(MouseButton::Left, move |_, window, _| {
+            window.start_window_resize(edge);
+        })
 }
 
 fn nav_item(label: &str, active: bool) -> Div {
@@ -897,6 +1011,7 @@ fn main() {
         gpui_kit::open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                window_decorations: Some(WindowDecorations::Client),
                 titlebar: Some(TitlebarOptions {
                     title: Some("GNOUS".into()),
                     ..Default::default()
@@ -904,7 +1019,7 @@ fn main() {
                 ..Default::default()
             },
             cx,
-            |_, cx| cx.new(|_| App),
+            |_, cx| cx.new(|_| App::default()),
         )
         .expect("failed to open window");
     });
