@@ -17,29 +17,15 @@ macro_rules! icon {
 pub const GRID: &str = icon!(
     r#"<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>"#
 );
-pub const PUZZLE: &str = icon!(
-    r#"<path d="M10 3h4v4h4v4h4v4h-4v4h-4v-4H10v4H6v-4H2v-4h4V7h4z"/>"#
-);
+pub const PUZZLE: &str = icon!(r#"<path d="M10 3h4v4h4v4h4v4h-4v4h-4v-4H10v4H6v-4H2v-4h4V7h4z"/>"#);
 pub const SUN: &str = icon!(
     r#"<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/>"#
 );
-pub const MONITOR: &str = icon!(
-    r#"<rect x="2" y="4" width="20" height="13"/><path d="M8 21h8M12 17v4"/>"#
-);
-pub const POWER: &str = icon!(
-    r#"<path d="M12 2v10"/><path d="M6 6a8 8 0 1 0 12 0"/>"#
-);
+pub const MONITOR: &str =
+    icon!(r#"<rect x="2" y="4" width="20" height="13"/><path d="M8 21h8M12 17v4"/>"#);
+pub const POWER: &str = icon!(r#"<path d="M12 2v10"/><path d="M6 6a8 8 0 1 0 12 0"/>"#);
 pub const SETTINGS: &str = icon!(
     r#"<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-4l-.3 2.6a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 2.6h4l.3-2.6a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6c.1-.3.1-.7.1-1z"/>"#
-);
-pub const LIST: &str = icon!(r#"<path d="M4 6h16M4 12h16M4 18h10"/>"#);
-pub const WINDOW: &str = icon!(
-    r#"<rect x="3" y="5" width="18" height="12"/><path d="M3 11h18M7 17v2M17 17v2"/>"#
-);
-pub const PLUS: &str = icon!(r#"<path d="M12 3v18M3 12h18"/>"#);
-pub const PULSE: &str = icon!(r#"<path d="M4 12h4l2-6 4 12 2-6h4"/>"#);
-pub const CLOCK: &str = icon!(
-    r#"<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>"#
 );
 
 /// Render an inline icon at an explicit size.

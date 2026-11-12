@@ -1,14 +1,16 @@
+mod ext;
 mod icons;
 mod sys;
 mod theme;
 
 use std::time::{Duration, Instant};
 
+use ext::Provider as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AppContext as _, Bounds, Context, Div, FontWeight, Hsla, InteractiveElement as _, IntoElement,
-    MouseButton, ParentElement as _, PathBuilder, Point, Render, ResizeEdge,
-    StatefulInteractiveElement as _, Styled, TitlebarOptions, Window, WindowBounds,
+    MouseButton, ParentElement as _, PathBuilder, Point, Render, ResizeEdge, Stateful,
+    StatefulInteractiveElement as _, Styled, TitlebarOptions, WeakEntity, Window, WindowBounds,
     WindowDecorations, WindowOptions, canvas, div, point, px, relative, rgba, size,
 };
 use theme::{
@@ -27,25 +29,38 @@ const DRAG_THRESHOLD: f32 = 4.;
 struct App {
     probe: sys::Probe,
     snap: sys::Snapshot,
+    provider: ext::FilesystemProvider,
+    extensions: Vec<ext::Extension>,
     last_click: Option<Instant>,
     drag_anchor: Option<Point<gpui_kit::Pixels>>,
 }
 
 /// How often the overview re-samples the machine.
 const REFRESH: Duration = Duration::from_secs(1);
+/// Extensions change rarely; re-reading gsettings every tick would be waste.
+const EXTENSION_TICKS: u32 = 10;
 
 impl App {
     fn new(cx: &mut Context<Self>) -> Self {
         let mut probe = sys::Probe::new();
         let snap = probe.sample();
+        let provider = ext::FilesystemProvider::discover();
+        let extensions = provider.list();
         // Sampling runs on the UI thread: every probe is a procfs/sysfs read,
         // so a tick costs microseconds and never races the render.
         cx.spawn(async move |this, cx| {
+            let mut ticks = 0u32;
             loop {
                 cx.background_executor().timer(REFRESH).await;
+                ticks = ticks.wrapping_add(1);
+                let rescan = ticks % EXTENSION_TICKS == 0;
                 let alive = this
                     .update(cx, |app, cx| {
                         app.snap = app.probe.sample();
+                        if rescan {
+                            app.provider.reload();
+                            app.extensions = app.provider.list();
+                        }
                         cx.notify();
                     })
                     .is_ok();
@@ -58,11 +73,26 @@ impl App {
         Self {
             probe,
             snap,
+            provider,
+            extensions,
             last_click: None,
             drag_anchor: None,
         }
     }
+
+    /// Flip an extension through the active provider, then re-read the
+    /// inventory so the row reflects what the system actually accepted.
+    fn toggle_extension(&mut self, uuid: &str, enabled: bool, cx: &mut Context<Self>) {
+        if let Err(error) = self.provider.set_enabled(uuid, enabled) {
+            eprintln!("gnous: 切换扩展 {uuid} 失败: {error}");
+            return;
+        }
+        self.provider.reload();
+        self.extensions = self.provider.list();
+        cx.notify();
+    }
 }
+
 impl Render for App {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         h().relative()
@@ -77,7 +107,7 @@ impl Render for App {
                     .min_w_0()
                     .min_h_0()
                     .child(self.topbar(cx))
-                    .child(content(&self.snap)),
+                    .child(content(&self.snap, &self.extensions, cx)),
             )
             .child(resize_grips())
     }
@@ -196,7 +226,6 @@ impl App {
                     .child(div().text_color(text()).child(snap.clock.clone())),
             )
             .on_mouse_down(MouseButton::Left, move |event, window, cx| {
-                eprintln!("DBG down at {:?}", event.position);
                 let now = Instant::now();
                 let mut zoom = false;
                 let _ = weak_down.update(cx, |this, _| {
@@ -217,10 +246,6 @@ impl App {
                 }
             })
             .on_mouse_move(move |event, window, cx| {
-                eprintln!(
-                    "DBG move {:?} pressed={:?}",
-                    event.position, event.pressed_button
-                );
                 if event.pressed_button != Some(MouseButton::Left) {
                     return;
                 }
@@ -238,7 +263,6 @@ impl App {
                     }
                 });
                 if begin_move {
-                    eprintln!("DBG start_window_move");
                     window.start_window_move();
                 }
             })
@@ -308,7 +332,12 @@ fn nav_item(label: &str, active: bool) -> Div {
 // Scrollable content
 // ============================================================================
 
-fn content(snap: &sys::Snapshot) -> impl IntoElement {
+fn content(
+    snap: &sys::Snapshot,
+    extensions: &[ext::Extension],
+    cx: &mut Context<App>,
+) -> impl IntoElement {
+    let weak = cx.entity().downgrade();
     v().id("content")
         .flex_1()
         .min_h_0()
@@ -319,8 +348,11 @@ fn content(snap: &sys::Snapshot) -> impl IntoElement {
         .pb(px(64.))
         .child(hero(snap))
         .child(metrics(snap))
-        .child(section_head("扩展与开关", "管理全部 14 项 →"))
-        .child(panels())
+        .child(section_head(
+            "扩展与开关",
+            &format!("管理全部 {} 项 →", extensions.len()),
+        ))
+        .child(panels(extensions, &weak))
         .child(section_head("资源热点", "打开任务管理器 →"))
         .child(processes())
         .child(section_head("启动器 · 常用", "编辑布局 →"))
@@ -510,7 +542,7 @@ fn section_head(title: &str, link: &str) -> Div {
 // Extensions + quick toggles
 // ============================================================================
 
-fn panels() -> Div {
+fn panels(extensions: &[ext::Extension], weak: &WeakEntity<App>) -> Div {
     h().items_stretch()
         .gap(px(1.))
         .bg(line())
@@ -524,46 +556,7 @@ fn panels() -> Div {
                 .pt(px(30.))
                 .pb(px(30.))
                 .px(px(28.))
-                .child(ext_row(
-                    0,
-                    icons::LIST,
-                    "Dash to Dock",
-                    "v79 · 运行中",
-                    "Active",
-                    ok(),
-                ))
-                .child(ext_row(
-                    1,
-                    icons::WINDOW,
-                    "Blur my Shell",
-                    "v57 · 运行中",
-                    "Active",
-                    ok(),
-                ))
-                .child(ext_row(
-                    2,
-                    icons::PLUS,
-                    "Just Perfection",
-                    "v26 · 已禁用",
-                    "Off",
-                    dim(),
-                ))
-                .child(ext_row(
-                    3,
-                    icons::PULSE,
-                    "Vitals",
-                    "v73 · 传感器异常",
-                    "Warning",
-                    warn(),
-                ))
-                .child(ext_row(
-                    4,
-                    icons::CLOCK,
-                    "Clipboard Indicator",
-                    "v54 · 运行中",
-                    "Active",
-                    ok(),
-                )),
+                .children(ext_rows(extensions, weak)),
         )
         .child(
             v().flex_1()
@@ -598,18 +591,58 @@ fn panels() -> Div {
         )
 }
 
+/// Rows for the extension panel, or a hint when the machine has none.
+fn ext_rows(extensions: &[ext::Extension], weak: &WeakEntity<App>) -> Vec<Stateful<Div>> {
+    if extensions.is_empty() {
+        return vec![empty_extensions()];
+    }
+    let last = extensions.len() - 1;
+    extensions
+        .iter()
+        .enumerate()
+        .map(|(index, extension)| ext_row(index, index == last, extension, weak))
+        .collect()
+}
+
+fn empty_extensions() -> Stateful<Div> {
+    let dir = std::env::var("HOME")
+        .map(|home| format!("{home}/.local/share/gnome-shell/extensions"))
+        .unwrap_or_else(|_| "~/.local/share/gnome-shell/extensions".into());
+    v().id("ext-empty")
+        .py(px(24.))
+        .child(txt("未检测到已安装扩展", 13., FontWeight::NORMAL, muted()))
+        .child(
+            txt(
+                format!("放入 {dir} 后 10 秒内自动出现"),
+                10.5,
+                FontWeight::NORMAL,
+                dim(),
+            )
+            .mt(px(6.)),
+        )
+}
+
 fn ext_row(
     index: usize,
-    svg: &'static str,
-    name: &'static str,
-    meta: &'static str,
-    status: &'static str,
-    status_color: Hsla,
-) -> Div {
+    last: bool,
+    extension: &ext::Extension,
+    weak: &WeakEntity<App>,
+) -> Stateful<Div> {
+    let (status, enabled) = extension.status();
+    let status_color = if enabled { ok() } else { dim() };
+    let (uuid, want) = (extension.uuid.clone(), !enabled);
+    let weak = weak.clone();
     h().items_center()
+        .id(("ext", index))
+        .cursor_pointer()
         .gap(px(16.))
         .py(px(15.))
-        .when(index < 4, |this| this.border_b(px(1.)).border_color(line()))
+        .hover(|this| this.bg(surface_2()))
+        .on_click(move |_, _, cx| {
+            let uuid = uuid.clone();
+            let _ = weak.update(cx, |app, cx| app.toggle_extension(&uuid, want, cx));
+        })
+        .when(!last, |this| this.border_b(px(1.)).border_color(line()))
         .child(
             div()
                 .w(px(30.))
@@ -620,13 +653,21 @@ fn ext_row(
                 .justify_center()
                 .border(px(1.))
                 .border_color(line())
-                .child(icons::icon(svg, 14., muted())),
+                .child(icons::icon(icons::PUZZLE, 14., muted())),
         )
         .child(
             v().flex_1()
                 .min_w_0()
-                .child(txt(name, 13., FontWeight::NORMAL, text()))
-                .child(txt(meta, 10.5, FontWeight::NORMAL, dim()).mt(px(3.))),
+                .child(txt(extension.name.clone(), 13., FontWeight::NORMAL, text()))
+                .child(
+                    txt(
+                        format!("{} · {}", extension.meta_line(), extension.origin.label()),
+                        10.5,
+                        FontWeight::NORMAL,
+                        dim(),
+                    )
+                    .mt(px(3.)),
+                ),
         )
         .child(caps(status, 9.5, FontWeight::NORMAL, status_color, 0.18))
 }
