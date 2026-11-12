@@ -1,0 +1,23 @@
+# 复制本目录为 extensions/<extension-id>/ 后按需修改。
+# 字段含义与判定标准见 docs/EXTENSIONS.md。
+
+id = "example-extension"
+name = "示例扩展"
+summary = "一句话说明这个扩展做什么"
+version = "0.1.0"
+icon = "puzzle"               # gpui-kit 图标名，或 assets 里的 svg 路径
+capabilities = ["settings"]   # "settings" 通用接入；"page" 额外注册左栏页面
+
+# 仅 capabilities 含 "page" 时需要
+# nav = { label = "示例", order = 90 }
+
+[settings.demo_toggle]
+type = "bool"
+label = "示例开关"
+default = false
+
+[settings.demo_mode]
+type = "enum"
+label = "示例模式"
+default = "auto"
+options = ["auto", "manual"]
