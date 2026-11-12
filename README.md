@@ -26,6 +26,10 @@
   性能模式（`powerprofilesctl`）、夜间色温（`night-light-enabled`）；系统没有对应
   schema / 命令的开关会显示为不可用并说明原因，而不是假装有个值。
 
+- 导航分两层：左列 rail 选分区（Overview / Extensions / Appearance / Devices / Power），
+  顶栏 tab 是该分区内的页面（如 Overview → Overview / Processes）。两者共用一份
+  `Nav` 状态，所以永远同步；未实现的页面显示占位而不是假数据。
+
 其余区块（进程表、启动器）仍是静态占位。
 
 ![GNOUS 渲染](docs/gnous.png)

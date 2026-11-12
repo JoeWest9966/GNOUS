@@ -38,6 +38,7 @@ struct App {
     selected: Option<String>,
     /// Last provider failure, shown inside the detail panel.
     error: Option<String>,
+    nav: Nav,
     last_click: Option<Instant>,
     drag_anchor: Option<Point<gpui_kit::Pixels>>,
 }
@@ -89,9 +90,28 @@ impl App {
             switches,
             selected: None,
             error: None,
+            nav: Nav::default(),
             last_click: None,
             drag_anchor: None,
         }
+    }
+
+    /// Switch section: the rail highlight and the tab row both follow.
+    fn go_section(&mut self, section: Section, cx: &mut Context<Self>) {
+        self.nav = Nav {
+            section,
+            page: section.pages()[0],
+        };
+        self.selected = None;
+        self.error = None;
+        cx.notify();
+    }
+
+    fn go_page(&mut self, page: Page, cx: &mut Context<Self>) {
+        self.nav.page = page;
+        self.selected = None;
+        self.error = None;
+        cx.notify();
     }
 
     /// Open the detail panel for `uuid`, or close it when it is already open.
@@ -134,13 +154,14 @@ impl App {
 
 impl Render for App {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let weak = cx.entity().downgrade();
         h().relative()
             .size_full()
             .items_stretch()
             .bg(black())
             .font_family(FONT)
             .text_color(text())
-            .child(rail())
+            .child(rail(self.nav.section, &weak))
             .child(
                 v().flex_1()
                     .min_w_0()
@@ -153,6 +174,7 @@ impl Render for App {
                             switches: &self.switches,
                             selected: self.selected.as_deref(),
                             error: self.error.as_deref(),
+                            page: self.nav.page,
                         },
                         cx,
                     )),
@@ -162,11 +184,117 @@ impl Render for App {
 }
 
 // ============================================================================
+// Navigation: rail selects a section, the top bar tabs select a page inside it
+// ============================================================================
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Section {
+    Overview,
+    Extensions,
+    Appearance,
+    Devices,
+    Power,
+}
+
+impl Section {
+    const ALL: &'static [Section] = &[
+        Section::Overview,
+        Section::Extensions,
+        Section::Appearance,
+        Section::Devices,
+        Section::Power,
+    ];
+
+    fn index(self) -> u32 {
+        match self {
+            Section::Overview => 0,
+            Section::Extensions => 1,
+            Section::Appearance => 2,
+            Section::Devices => 3,
+            Section::Power => 4,
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            Section::Overview => icons::GRID,
+            Section::Extensions => icons::PUZZLE,
+            Section::Appearance => icons::SUN,
+            Section::Devices => icons::MONITOR,
+            Section::Power => icons::POWER,
+        }
+    }
+
+    /// Pages this section shows in the top bar. First one is the default.
+    fn pages(self) -> &'static [Page] {
+        match self {
+            Section::Overview => &[Page::Overview, Page::Processes],
+            Section::Extensions => &[Page::Installed],
+            Section::Appearance => &[Page::Appearance],
+            Section::Devices => &[Page::Devices],
+            Section::Power => &[Page::Power],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Page {
+    Overview,
+    Processes,
+    Installed,
+    Appearance,
+    Devices,
+    Power,
+}
+
+impl Page {
+    fn index(self) -> u32 {
+        match self {
+            Page::Overview => 0,
+            Page::Processes => 1,
+            Page::Installed => 2,
+            Page::Appearance => 3,
+            Page::Devices => 4,
+            Page::Power => 5,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Page::Overview => "Overview",
+            Page::Processes => "Processes",
+            Page::Installed => "Installed",
+            Page::Appearance => "Appearance",
+            Page::Devices => "Devices",
+            Page::Power => "Power",
+        }
+    }
+}
+
+/// Single source of truth for navigation: both the rail and the tabs render
+/// from it, so they can never disagree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Nav {
+    section: Section,
+    page: Page,
+}
+
+impl Default for Nav {
+    fn default() -> Self {
+        Self {
+            section: Section::Overview,
+            page: Page::Overview,
+        }
+    }
+}
+
+// ============================================================================
 // Left icon rail
 // ============================================================================
 
-fn rail() -> Div {
-    v().w(px(68.))
+fn rail(current: Section, weak: &WeakEntity<App>) -> Div {
+    let mut column = v()
+        .w(px(68.))
         .flex_shrink_0()
         .items_center()
         .py(px(22.))
@@ -183,18 +311,16 @@ fn rail() -> Div {
                 .border(px(1.))
                 .border_color(alpha(0xffffff2e))
                 .child(tracked("G", 11., FontWeight::SEMIBOLD, text(), 0.08)),
-        )
-        .child(rail_button("rail-overview", icons::GRID, true))
-        .child(rail_button("rail-ext", icons::PUZZLE, false))
-        .child(rail_button("rail-appearance", icons::SUN, false))
-        .child(rail_button("rail-devices", icons::MONITOR, false))
-        .child(rail_button("rail-power", icons::POWER, false))
-        .child(div().flex_1())
-        .child(rail_button("rail-settings", icons::SETTINGS, false))
+        );
+    for section in Section::ALL {
+        column = column.child(rail_button(*section, *section == current, weak));
+    }
+    column.child(div().flex_1()).child(rail_settings_button())
 }
 
-fn rail_button(id: &'static str, svg: &'static str, active: bool) -> impl IntoElement {
+fn rail_button(section: Section, active: bool, weak: &WeakEntity<App>) -> Stateful<Div> {
     let color = if active { text() } else { dim() };
+    let weak = weak.clone();
     div()
         .relative()
         .w(px(40.))
@@ -202,7 +328,9 @@ fn rail_button(id: &'static str, svg: &'static str, active: bool) -> impl IntoEl
         .flex()
         .items_center()
         .justify_center()
-        .id(id)
+        .id(("rail", section.index()))
+        .cursor_pointer()
+        .hover(|this| this.bg(alpha(0xffffff0a)))
         .when(active, |this| {
             this.child(
                 div()
@@ -214,7 +342,21 @@ fn rail_button(id: &'static str, svg: &'static str, active: bool) -> impl IntoEl
                     .bg(accent()),
             )
         })
-        .child(icons::icon(svg, 18., color))
+        .child(icons::icon(section.icon(), 18., color))
+        .on_click(move |_, _, cx| {
+            let _ = weak.update(cx, |app, cx| app.go_section(section, cx));
+        })
+}
+
+/// Settings is not a section yet; keep the icon but leave it inert.
+fn rail_settings_button() -> impl IntoElement {
+    div()
+        .w(px(40.))
+        .h(px(40.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(icons::icon(icons::SETTINGS, 18., dim()))
 }
 
 // ============================================================================
@@ -229,6 +371,7 @@ impl App {
         let weak_down = cx.entity().downgrade();
         let weak_move = cx.entity().downgrade();
         let weak_up = cx.entity().downgrade();
+        let tab_weak = cx.entity().downgrade();
         let snap = &self.snap;
 
         h().id("titlebar")
@@ -241,14 +384,13 @@ impl App {
             .border_color(line())
             .child(tracked("GNOUS", 13., FontWeight::MEDIUM, text(), 0.34))
             .child(
-                h().h_full()
-                    .items_stretch()
-                    .gap(px(30.))
-                    .child(nav_item("Overview", true))
-                    .child(nav_item("Extensions", false))
-                    .child(nav_item("Appearance", false))
-                    .child(nav_item("Windows", false))
-                    .child(nav_item("Power", false)),
+                h().h_full().items_stretch().gap(px(30.)).children(
+                    self.nav
+                        .section
+                        .pages()
+                        .iter()
+                        .map(|page| nav_item(*page, *page == self.nav.page, &tab_weak)),
+                ),
             )
             .child(div().flex_1())
             .child(
@@ -365,15 +507,22 @@ fn grip(id: &'static str, edge: ResizeEdge, place: impl FnOnce(Div) -> Div) -> i
         })
 }
 
-fn nav_item(label: &str, active: bool) -> Div {
+fn nav_item(page: Page, active: bool, weak: &WeakEntity<App>) -> Stateful<Div> {
     let color = if active { text() } else { muted() };
+    let weakness = weak.clone();
     div()
         .h_full()
         .flex()
         .items_center()
+        .id(("nav", page.index()))
+        .cursor_pointer()
         .border_b(px(1.))
         .border_color(if active { accent() } else { alpha(0x00000000) })
-        .child(caps(label, 12., FontWeight::NORMAL, color, 0.13))
+        .hover(|this| this.border_color(if active { accent() } else { line_strong() }))
+        .child(caps(page.label(), 12., FontWeight::NORMAL, color, 0.13))
+        .on_click(move |_, _, cx| {
+            let _ = weakness.update(cx, |app, cx| app.go_page(page, cx));
+        })
 }
 
 // ============================================================================
@@ -388,10 +537,16 @@ struct Overview<'a> {
     switches: &'a [toggles::Toggle],
     selected: Option<&'a str>,
     error: Option<&'a str>,
+    page: Page,
 }
 
 fn content(overview: &Overview, cx: &mut Context<App>) -> impl IntoElement {
     let weak = cx.entity().downgrade();
+    let body = match overview.page {
+        Page::Overview => overview_body(overview, &weak),
+        Page::Installed => extensions_body(overview, &weak),
+        page => placeholder(page),
+    };
     v().id("content")
         .flex_1()
         .min_h_0()
@@ -400,17 +555,51 @@ fn content(overview: &Overview, cx: &mut Context<App>) -> impl IntoElement {
         .pr(px(52.))
         .pt(px(52.))
         .pb(px(64.))
-        .child(hero(overview.snap))
+        .child(body)
+}
+
+fn overview_body(overview: &Overview, weak: &WeakEntity<App>) -> Div {
+    v().child(hero(overview.snap))
         .child(metrics(overview.snap))
         .child(section_head(
             "扩展与开关",
             &format!("管理全部 {} 项 →", overview.extensions.len()),
         ))
-        .child(panels(overview, &weak))
+        .child(panels(overview, weak))
         .child(section_head("资源热点", "打开任务管理器 →"))
         .child(processes())
         .child(section_head("启动器 · 常用", "编辑布局 →"))
         .child(apps())
+}
+
+/// Extensions section: the same panel, without the overview chrome.
+fn extensions_body(overview: &Overview, weak: &WeakEntity<App>) -> Div {
+    v().child(section_head(
+        "扩展与开关",
+        &format!("管理全部 {} 项 →", overview.extensions.len()),
+    ))
+    .child(panels(overview, weak))
+}
+
+/// Sections whose content is not designed yet.
+fn placeholder(page: Page) -> Div {
+    v().pt(px(30.))
+        .pb(px(80.))
+        .child(caps("待设计", 10.5, FontWeight::NORMAL, dim(), 0.22))
+        .child(
+            txt(page.label(), 44., FontWeight::EXTRA_LIGHT, text())
+                .line_height(px(46.))
+                .mt(px(14.)),
+        )
+        .child(
+            txt(
+                "这个页面的内容还没实现，下一步先出 HTML demo 选型。",
+                13.,
+                FontWeight::NORMAL,
+                muted(),
+            )
+            .mt(px(12.)),
+        )
 }
 
 fn hero(snap: &sys::Snapshot) -> Div {
