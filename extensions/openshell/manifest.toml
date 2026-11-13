@@ -1,0 +1,44 @@
+id = "openshell"
+name = "OpenShell"
+summary = "沙箱舰队辅助面板：网关 / 沙箱 / 沙箱内部 / 网络暴露 / 策略 / 凭据 / 观测 / 工具，全部直接读取 openshell CLI 的真实输出"
+version = "0.1.0"
+capabilities = ["page"]
+icon = "box"
+
+# 页面级扩展：挂在「扩展」分区，在 Align 之后出现
+[nav]
+label = "OpenShell"
+section = "extensions"
+order = 40
+
+[[views]]
+id = "gateway"
+label = "Gateway"
+
+[[views]]
+id = "sandboxes"
+label = "Sandboxes"
+
+[[views]]
+id = "inside"
+label = "Inside"
+
+[[views]]
+id = "network"
+label = "Network"
+
+[[views]]
+id = "policy"
+label = "Policy"
+
+[[views]]
+id = "credentials"
+label = "Credentials"
+
+[[views]]
+id = "observe"
+label = "Observe"
+
+[[views]]
+id = "tooling"
+label = "Tooling"

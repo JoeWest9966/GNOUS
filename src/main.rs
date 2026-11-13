@@ -1,6 +1,7 @@
 mod ext;
 mod fixes;
 mod icons;
+mod openshell;
 mod pages;
 mod proc;
 mod registry;
@@ -159,6 +160,8 @@ pub(crate) struct App {
     root_align: root_align::State,
     /// Startup layouts: pages, splits and the boot policy (JSON-backed).
     startup: startup::State,
+    /// Snapshot + action log of the openshell panel.
+    openshell: openshell::State,
     /// UUID of the extension whose details are open in the right panel.
     selected: Option<String>,
     /// Last provider failure, shown inside the detail panel.
@@ -257,6 +260,7 @@ impl App {
             fixes_apply_armed: false,
             root_align: root_align::State::new(),
             startup: startup::State::load(),
+            openshell: openshell::State::new(),
             selected: None,
             error: None,
             nav: Nav::default(),
@@ -273,6 +277,84 @@ impl App {
         }
     }
 
+    /// Read the whole gateway once when the panel is first opened.
+    fn enter_openshell_page(&mut self, cx: &mut Context<Self>) {
+        if !self.openshell.checked && !self.openshell.busy {
+            self.probe_openshell(self.openshell.target.clone(), cx);
+        }
+    }
+
+    /// Re-read the gateway on a background thread. The UI thread only flips
+    /// `busy`; every value on the page comes from the returned snapshot.
+    fn probe_openshell(&mut self, target: Option<String>, cx: &mut Context<Self>) {
+        if self.openshell.busy {
+            return;
+        }
+        self.openshell.busy = true;
+        let weak = cx.entity().downgrade();
+        let task = cx
+            .background_executor()
+            .spawn(async move { openshell::probe(target.as_deref()) });
+        cx.spawn(async move |_, cx| {
+            let snapshot = task.await;
+            let _ = weak.update(cx, |app: &mut App, cx| {
+                app.openshell.busy = false;
+                app.openshell.absorb(snapshot);
+                cx.notify();
+            });
+            cx.refresh();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Run one panel action. Mutating actions need a second click; successful
+    /// ones re-probe so the page shows the post-action truth.
+    pub(crate) fn run_openshell(&mut self, action: openshell::Action, cx: &mut Context<Self>) {
+        if self.openshell.busy {
+            return;
+        }
+        if action.is_mutating() && self.openshell.armed.as_ref() != Some(&action) {
+            self.openshell.armed = Some(action);
+            cx.notify();
+            return;
+        }
+        self.openshell.armed = None;
+        if action.is_probe() {
+            self.probe_openshell(self.openshell.target.clone(), cx);
+            return;
+        }
+        self.openshell.busy = true;
+        let weak = cx.entity().downgrade();
+        let task_action = action.clone();
+        let task = cx
+            .background_executor()
+            .spawn(async move { openshell::run(&task_action) });
+        cx.spawn(async move |_, cx| {
+            let outcome = task.await;
+            let ok = outcome.ok;
+            let _ = weak.update(cx, |app: &mut App, cx| {
+                app.openshell.busy = false;
+                app.openshell.record(outcome);
+                if ok {
+                    let target = app.openshell.target.clone();
+                    app.probe_openshell(target, cx);
+                }
+                cx.notify();
+            });
+            cx.refresh();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Point the detail blocks (policy / logs / ssh / providers) at a sandbox.
+    pub(crate) fn select_openshell_target(&mut self, name: String, cx: &mut Context<Self>) {
+        self.openshell.target = Some(name.clone());
+        self.probe_openshell(Some(name), cx);
+        cx.notify();
+    }
+
     /// Switch section: the rail highlight and the tab row both follow.
     fn go_section(&mut self, section: Section, cx: &mut Context<Self>) {
         let page = section
@@ -285,6 +367,7 @@ impl App {
         self.error = None;
         self.fixes_apply_armed = false;
         self.root_align.armed = None;
+        self.openshell.armed = None;
         self.close_process_overlays();
         cx.notify();
     }
@@ -295,6 +378,7 @@ impl App {
         self.error = None;
         self.fixes_apply_armed = false;
         self.root_align.armed = None;
+        self.openshell.armed = None;
         self.close_process_overlays();
         if page.plugin == "processes" {
             self.proc = self.proc_sampler.sample();
@@ -304,6 +388,9 @@ impl App {
         }
         if page.plugin == "root-align" {
             self.enter_root_align_page(cx);
+        }
+        if page.plugin == "openshell" {
+            self.enter_openshell_page(cx);
         }
         cx.notify();
     }
@@ -919,6 +1006,7 @@ impl Render for App {
                             fixes_apply_armed: self.fixes_apply_armed,
                             root_align: &self.root_align,
                             startup: &self.startup,
+                            openshell: &self.openshell,
                             content_led: &self.content_led,
                             table_led: &self.table_led,
                         },
@@ -1352,6 +1440,8 @@ pub(crate) struct Overview<'a> {
     pub(crate) root_align: &'a root_align::State,
     /// Startup layouts model + probes.
     pub(crate) startup: &'a startup::State,
+    /// Snapshot and action log of the openshell panel.
+    pub(crate) openshell: &'a openshell::State,
     pub(crate) content_led: &'a scroll::Led,
     pub(crate) table_led: &'a scroll::Led,
 }
@@ -1366,6 +1456,7 @@ fn content(overview: &Overview, cx: &mut Context<App>) -> impl IntoElement {
         ("gnome-fixes", _) => pages::gnome_fixes::body(overview, &weak),
         ("root-align", _) => pages::root_align::body(overview, &weak),
         ("startup-layouts", view) => pages::startup_layouts::body(view, overview, &weak),
+        ("openshell", view) => pages::openshell::body(view, overview, &weak),
         (_, label) => placeholder(label),
     };
     // The table owns its scroller below the header; every other page keeps the

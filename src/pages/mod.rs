@@ -5,6 +5,7 @@
 //! means adding an entry to the manifest and a match arm in the module.
 
 pub mod gnome_fixes;
+pub mod openshell;
 pub mod processes;
 pub mod root_align;
 pub mod startup_layouts;
