@@ -1,0 +1,902 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GNOUS · 非条状滚动指示器实验台</title>
+<style>
+/* =========================================================================
+   非条状滚动指示器实验台 · 第二版
+   本版原则：滚轮假设是坏的。每个方案都必须能纯鼠标点击 / 拖动操作，
+   并且额外支持「拖内容滚动」「点上下边缘翻屏」「键盘」。
+   ========================================================================= */
+*{box-sizing:border-box}
+:root{
+  --bg:#000; --stage:#08080a; --panel:#0b0b0d;
+  --line:rgba(255,255,255,.09); --line-strong:rgba(255,255,255,.2);
+  --line-faint:rgba(255,255,255,.05);
+  --text:#F5F5F7; --muted:#86868B; --dim:#5A5A60;
+  --accent:#E31937; --ok:#37D67A;
+  --mono:ui-monospace,"JetBrains Mono","Noto Sans Mono",monospace;
+  --cjk:"Noto Sans CJK SC",system-ui,-apple-system,sans-serif;
+}
+html,body{margin:0;background:var(--bg);color:var(--text);font-family:var(--cjk)}
+body{-webkit-font-smoothing:antialiased}
+
+/* ---------- 页头 ---------- */
+.top{padding:40px 34px 6px;max-width:1560px;margin:0 auto}
+.top h1{margin:0;font-size:22px;font-weight:600;letter-spacing:.01em}
+.top .sub{margin:9px 0 0;color:var(--muted);font-size:12.5px;line-height:1.8;max-width:900px}
+.top .sub b{color:var(--text);font-weight:500}
+.top .sub code{font-family:var(--mono);font-size:11.5px;color:#d9d9df;background:rgba(255,255,255,.05);
+  border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+.keys{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+.keys div{font-family:var(--mono);font-size:10.5px;color:var(--muted);border:1px solid var(--line);
+  border-radius:5px;padding:5px 9px;background:rgba(255,255,255,.02)}
+.keys div b{color:#fff;font-weight:400}
+.keys div i{font-style:normal;color:var(--accent);margin-right:6px}
+
+/* ---------- 网格 ---------- */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));
+  gap:20px;padding:20px 34px 130px;max-width:1560px;margin:0 auto}
+
+/* ---------- 卡片 ---------- */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  overflow:hidden;transition:border-color .18s,box-shadow .18s;position:relative;outline:none}
+.card:hover{border-color:var(--line-strong)}
+.card:focus-visible{border-color:rgba(255,255,255,.45);box-shadow:0 0 0 1px rgba(255,255,255,.18)}
+.card.picked{border-color:rgba(227,25,55,.85);box-shadow:0 0 0 1px rgba(227,25,55,.35),0 18px 50px -30px rgba(227,25,55,.8)}
+.card-top{display:flex;align-items:center;gap:11px;padding:12px 14px;cursor:pointer;user-select:none}
+.num{font-family:var(--mono);font-size:10.5px;color:var(--dim);letter-spacing:.08em;
+  border:1px solid var(--line);border-radius:4px;padding:2px 6px;transition:.18s}
+.card.picked .num{color:#fff;border-color:var(--accent);background:rgba(227,25,55,.16)}
+.name{font-size:12.5px;font-weight:500;letter-spacing:.02em}
+.tag{margin-left:auto;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
+  color:var(--dim);text-transform:uppercase}
+.card.picked .tag{color:var(--accent)}
+
+/* ---------- 舞台 ---------- */
+.stage{position:relative;height:318px;background:var(--stage);
+  border-top:1px solid var(--line-faint);border-bottom:1px solid var(--line-faint);
+  overflow:hidden;isolation:isolate}
+.scroller{height:100%;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;
+  scrollbar-width:none;-ms-overflow-style:none;position:relative;z-index:1;
+  user-select:none;cursor:grab}
+.scroller::-webkit-scrollbar{width:0;height:0}
+.card.grabbing .scroller{cursor:grabbing}
+
+/* 上下边缘的「可点」提示：hover 舞台时浮出 */
+.chev{position:absolute;left:11px;z-index:5;font-family:var(--mono);font-size:8.5px;
+  letter-spacing:.12em;color:#fff;opacity:0;transition:opacity .2s;pointer-events:none}
+.chev.up{top:7px} .chev.dn{bottom:7px}
+.stage:hover .chev{opacity:.3}
+
+/* 给右侧指示器留出的排水槽（对应 GNOUS 现有的右留白） */
+.card[data-key="dots"] .scroller,
+.card[data-key="led"] .scroller{padding-right:30px}
+.card[data-key="rail"] .scroller{padding-right:44px}
+.card[data-key="mini"] .scroller{padding-right:58px}
+.card[data-key="glow"] .scroller{padding-right:40px}
+
+/* 行内容 */
+.row{display:grid;grid-template-columns:56px 1fr 44px 52px;align-items:center;
+  gap:10px;padding:8px 16px;border-bottom:1px solid var(--line-faint);
+  font-family:var(--mono);font-size:11px;color:var(--dim);white-space:nowrap}
+.row .nm{color:#b9b9c0;overflow:hidden;text-overflow:ellipsis}
+.row .cpu,.row .mem{text-align:right}
+.row:hover{background:rgba(255,255,255,.032)}
+.row .pid::before{content:"";display:inline-block;width:4px;height:4px;border-radius:50%;
+  background:rgba(255,255,255,.16);margin-right:7px;vertical-align:1px}
+.sechead{padding:15px 16px 7px;font-family:var(--mono);font-size:9px;letter-spacing:.16em;
+  color:var(--dim);text-transform:uppercase;border-bottom:1px solid var(--line-faint);
+  position:sticky;top:0;background:var(--stage);z-index:2}
+.sechead:first-child{padding-top:11px}
+
+/* ---------- 页脚说明 ---------- */
+.card-foot{padding:11px 14px 13px;display:flex;flex-direction:column;gap:5px}
+.desc{margin:0;font-size:11.5px;line-height:1.65;color:var(--muted)}
+.ops{margin:0;font-family:var(--mono);font-size:10px;line-height:1.65;color:#9a9aa2}
+.ops::before{content:"操作 · ";color:var(--accent)}
+.cost{margin:0;font-family:var(--mono);font-size:10px;line-height:1.6;color:var(--dim)}
+.cost b{color:#9a9aa2;font-weight:400}
+
+/* =========================================================================
+   01 边缘渐隐
+   ========================================================================= */
+.veil{position:absolute;left:0;right:0;height:58px;pointer-events:none;z-index:3;
+  opacity:0;transition:opacity .16s linear}
+.veil.top{top:0;background:linear-gradient(to bottom,var(--stage) 8%,rgba(8,8,10,.86) 52%,transparent)}
+.veil.bottom{bottom:0;background:linear-gradient(to top,var(--stage) 8%,rgba(8,8,10,.86) 52%,transparent)}
+
+/* =========================================================================
+   02 角标百分比（带 ▲▼ 按钮）
+   ========================================================================= */
+.hud{position:absolute;right:12px;bottom:11px;z-index:6;display:flex;align-items:center;gap:4px;
+  padding:3px 5px;border-radius:7px;background:rgba(10,10,12,.86);
+  border:1px solid var(--line);backdrop-filter:blur(8px);
+  font-family:var(--mono);font-size:10px;letter-spacing:.06em;color:#cfcfd6;
+  opacity:0;transform:translateY(4px);transition:opacity .2s,transform .2s;pointer-events:none}
+.hud.on{opacity:1;transform:none;pointer-events:auto}
+.hud .val{min-width:30px;text-align:center}
+.hbtn{width:17px;height:17px;display:grid;place-items:center;border-radius:4px;
+  border:1px solid transparent;background:none;color:var(--dim);
+  font-size:7px;cursor:pointer;padding:0;pointer-events:auto;line-height:1}
+.hbtn:hover{background:rgba(255,255,255,.1);color:#fff;border-color:var(--line)}
+.hbtn:active{background:rgba(227,25,55,.3);color:#fff;border-color:rgba(227,25,55,.6)}
+
+/* =========================================================================
+   03 刻度点
+   ========================================================================= */
+.ticks{position:absolute;right:12px;top:16px;bottom:16px;width:16px;z-index:4;
+  display:flex;flex-direction:column;justify-content:space-between;align-items:center;
+  cursor:ns-resize}
+.tick{width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.22);
+  transition:transform .22s cubic-bezier(.2,.8,.2,1),background .22s,box-shadow .22s}
+.tick.on{background:var(--accent);transform:scale(1.9);box-shadow:0 0 0 3px rgba(227,25,55,.16),0 0 12px rgba(227,25,55,.65)}
+.tick.past{background:rgba(255,255,255,.42)}
+
+/* =========================================================================
+   04 迷你地图
+   ========================================================================= */
+.mini{position:absolute;right:9px;top:10px;bottom:10px;width:46px;z-index:4;cursor:grab;
+  padding:5px 6px;border-radius:5px;background:rgba(255,255,255,.016);
+  border:1px solid transparent;transition:border-color .18s,background .18s}
+.mini:hover{border-color:var(--line);background:rgba(255,255,255,.036)}
+.card.grabbing .mini{cursor:grabbing}
+.mini i{position:absolute;height:1.5px;border-radius:1px;background:rgba(255,255,255,.13);left:6px}
+.mini-vp{position:absolute;left:2px;right:2px;top:5px;border-radius:3px;
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.26);
+  box-shadow:0 0 14px rgba(0,0,0,.9);transition:top .06s linear}
+
+/* =========================================================================
+   05 顶部发丝（可点/可拖）
+   ========================================================================= */
+.hair{position:absolute;left:0;right:0;top:0;height:2px;z-index:4;pointer-events:none}
+.hair::before{content:"";position:absolute;inset:0;background:rgba(255,255,255,.05)}
+.hair-fill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--accent);
+  box-shadow:0 0 10px rgba(227,25,55,.55)}
+.hair-dot{position:absolute;top:50%;left:0;width:5px;height:5px;margin:-2.5px 0 0 -2.5px;
+  border-radius:50%;background:#fff;box-shadow:0 0 9px rgba(255,255,255,.9),0 0 16px rgba(227,25,55,.9)}
+.hair-hit{position:absolute;left:0;right:0;top:0;height:18px;z-index:6;cursor:ew-resize;
+  background:transparent}
+.hair-hit::after{content:"";position:absolute;left:0;right:0;top:0;height:18px;
+  background:linear-gradient(to bottom,rgba(255,255,255,.05),transparent);opacity:0;transition:opacity .18s}
+.hair-hit:hover::after{opacity:1}
+
+/* =========================================================================
+   06 边缘光斑（可拖）
+   ========================================================================= */
+.glow{position:absolute;right:-44px;top:0;width:120px;height:140px;z-index:4;pointer-events:none;
+  background:radial-gradient(closest-side,rgba(227,25,55,.52),rgba(227,25,55,.2) 42%,rgba(227,25,55,.05) 66%,transparent 78%);
+  opacity:0;transition:transform .34s cubic-bezier(.22,.61,.36,1),opacity .4s}
+.glow.core{width:22px;height:22px;right:-4px;
+  background:radial-gradient(closest-side,rgba(255,255,255,.92),rgba(255,140,152,.55) 48%,transparent 80%)}
+.glow.on{opacity:.92}
+.glow.core.on{opacity:1}
+.glow-hit{position:absolute;right:0;top:0;bottom:0;width:44px;z-index:6;cursor:ns-resize;
+  background:transparent}
+
+/* =========================================================================
+   07 章节刻度（整条可点/可拖）
+   ========================================================================= */
+.rail{position:absolute;right:0;top:16px;bottom:16px;width:96px;z-index:4;cursor:ns-resize}
+.rail-t{position:absolute;right:14px;height:1px;width:9px;background:rgba(255,255,255,.18);
+  transition:width .24s,background .24s,box-shadow .24s}
+.rail-t.on{width:24px;background:var(--accent);box-shadow:0 0 10px rgba(227,25,55,.7)}
+.rail-l{position:absolute;right:44px;transform:translateY(-50%);white-space:nowrap;
+  font-family:var(--mono);font-size:9px;letter-spacing:.08em;color:var(--dim);
+  opacity:0;transition:opacity .24s;pointer-events:none}
+.rail-l.on{opacity:1;color:#d8d8de}
+
+/* =========================================================================
+   08 章节胶囊（◀ ▶ 切节）
+   ========================================================================= */
+.chip{position:absolute;left:50%;bottom:13px;z-index:6;transform:translate(-50%,6px);
+  display:flex;align-items:center;gap:8px;padding:3px 5px 3px 8px;border-radius:999px;
+  background:rgba(12,12,15,.92);border:1px solid var(--line);backdrop-filter:blur(10px);
+  font-family:var(--mono);font-size:10px;letter-spacing:.07em;color:#d5d5dc;
+  opacity:0;transition:opacity .24s,transform .24s;pointer-events:none;white-space:nowrap}
+.chip.on{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+.chip .sec{color:#fff}
+.chip .pos{color:var(--dim)}
+
+/* =========================================================================
+   09 边界张力
+   ========================================================================= */
+.tension{position:absolute;left:0;right:0;height:3px;z-index:4;pointer-events:none;opacity:0;
+  transition:opacity .3s}
+.tension.top{top:0;background:linear-gradient(to bottom,rgba(227,25,55,.85),transparent)}
+.tension.bottom{bottom:0;background:linear-gradient(to top,rgba(227,25,55,.85),transparent)}
+.tension.on{opacity:1;animation:pulse 1.5s ease-in-out infinite}
+@keyframes pulse{0%,100%{filter:brightness(.7)}50%{filter:brightness(1.5)}}
+.at-edge{position:absolute;left:50%;z-index:6;transform:translateX(-50%);
+  font-family:var(--mono);font-size:8.5px;letter-spacing:.16em;color:rgba(255,255,255,.55);
+  opacity:0;transition:opacity .25s,color .2s;pointer-events:none;text-transform:uppercase;
+  padding:4px 8px;border-radius:4px}
+.at-edge.top{top:6px}
+.at-edge.bottom{bottom:6px}
+.at-edge.on{opacity:1;pointer-events:auto;cursor:pointer}
+.at-edge.on:hover{color:#fff;background:rgba(227,25,55,.18)}
+
+/* =========================================================================
+   10 LED 刻度（整条可点/可拖）
+   ========================================================================= */
+.led{position:absolute;right:11px;top:14px;bottom:14px;width:16px;z-index:4;cursor:ns-resize;
+  display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end}
+.led i{height:2px;width:5px;background:rgba(255,255,255,.1);border-radius:1px;
+  transition:background .2s,width .2s,box-shadow .2s}
+.led i.on{width:8px;background:rgba(227,25,55,.55)}
+.led i.cur{width:12px;background:var(--accent);box-shadow:0 0 9px rgba(227,25,55,.9)}
+
+/* ---------- 底部选择条 ---------- */
+.bar{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;align-items:center;gap:16px;
+  padding:13px 34px;background:rgba(6,6,8,.92);backdrop-filter:blur(14px);
+  border-top:1px solid var(--line);font-size:12px}
+.bar .lbl{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;color:var(--dim);
+  text-transform:uppercase}
+.bar #pick{color:var(--muted)}
+.bar #pick b{color:#fff;font-weight:500}
+.bar .sp{flex:1}
+.bar button{font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--muted);
+  background:none;border:1px solid var(--line);border-radius:5px;padding:5px 10px;cursor:pointer;
+  transition:.16s}
+.bar button:hover{color:#fff;border-color:rgba(255,255,255,.5)}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <h1>非条状滚动指示器 · 10 个方向</h1>
+  <p class="sub">
+    每个卡片都是一块真实内容（6 个分节 × 9 行假的进程表），十种方案都<b>不画连续的拇指条</b>。
+    <b>本版按「滚轮是坏的」重做</b>：每个方案本身都能点、能拖，不用滚轮也能走完整个列表。
+  </p>
+  <div class="keys">
+    <div><i>01</i><b>按住内容上下拖</b> = 滚动</div>
+    <div><i>02</i><b>点舞台上下边缘</b> = 翻一屏</div>
+    <div><i>03</i><b>点 / 拖右侧指示器</b> = 精确定位</div>
+    <div><i>04</i><b>点卡片后</b> ↑↓ PgUp PgDn Home End</div>
+  </div>
+</div>
+
+<div class="grid" id="grid">
+
+<!-- 01 -->
+<article class="card" data-key="fade">
+  <div class="card-top"><span class="num">01</span><span class="name">边缘渐隐</span><span class="tag">zero chrome</span></div>
+  <div class="stage">
+    <div class="chev up">▲ 点这里翻上屏</div><div class="chev dn">▼ 点这里翻下屏</div>
+    <div class="scroller"><div class="rows"></div></div>
+    <div class="veil top"></div><div class="veil bottom"></div>
+  </div>
+  <div class="card-foot">
+    <p class="desc">完全不画指示器。内容在上下边缘溶进背景，只有「还有内容」这一条信息，视觉最干净。</p>
+    <p class="ops">拖内容滚动 / 点上下边缘翻屏 / 键盘 ↑↓ PgUp PgDn</p>
+    <p class="cost"><b>代价：</b>不知道自己在哪、还有多远。<b> GPUI：</b>两个渐变遮罩改透明度即可。</p>
+  </div>
+</article>
+
+<!-- 02 -->
+<article class="card" data-key="hud">
+  <div class="card-top"><span class="num">02</span><span class="name">角标百分比</span><span class="tag">hud + buttons</span></div>
+  <div class="stage">
+    <div class="chev up">▲</div><div class="chev dn">▼</div>
+    <div class="scroller"><div class="rows"></div></div>
+    <div class="hud" data-nopage>
+      <button class="hbtn up" title="上一屏">▲</button>
+      <span class="val">0%</span>
+      <button class="hbtn dn" title="下一屏">▼</button>
+    </div>
+  </div>
+  <div class="card-foot">
+    <p class="desc">右下角一枚小胶囊：百分比 + <b>两个可点按钮</b>。鼠标进入舞台就浮出，离开才淡出（不再依赖「滚动时才出现」，否则没滚轮就再也叫不出来）。按住 ▲▼ 可连翻。</p>
+    <p class="ops">点 ▲▼ 翻屏（按住连翻）/ 拖内容 / 点上下边缘 / 键盘</p>
+    <p class="cost"><b>代价：</b>看不到「还有多长」的量。<b> GPUI：</b>一个文本 + 两个按钮，最好实现。</p>
+  </div>
+</article>
+
+<!-- 03 -->
+<article class="card" data-key="dots">
+  <div class="card-top"><span class="num">03</span><span class="name">刻度点</span><span class="tag">12 segments</span></div>
+  <div class="stage">
+    <div class="chev up">▲</div><div class="chev dn">▼</div>
+    <div class="scroller"><div class="rows"></div></div>
+    <div class="ticks" data-nopage title="点哪跳哪，按住可拖"></div>
+  </div>
+  <div class="card-foot">
+    <p class="desc">右缘 12 个等距圆点，滚过的点变亮、当前点放大成红点发光。<b>整列就是一个可拖的定位带</b>：点任意高度立刻跳过去，按住上下拖可以连续走。像页码，不像进度条。</p>
+    <p class="ops">点 / 拖右侧圆点带 / 拖内容 / 点上下边缘 / 键盘</p>
+    <p class="cost"><b>代价：</b>视觉上只分 12 段（拖动时实际是连续的）。<b> GPUI：</b>12 个 div + PointerDown/Move。</p>
+  </div>
+</article>
+
+<!-- 04 -->
+<article class="card" data-key="mini">
+  <div class="card-top"><span class="num">04</span><span class="name">迷你地图</span><span class="tag">minimap</span></div>
+  <div class="stage">
+    <div class="chev up">▲</div><div class="chev dn">▼</div>
+    <div class="scroller"><div class="rows"></div></div>
+    <div class="mini" data-nopage title="点视口外跳转 / 拖视口移动"><div class="mini-vp"></div></div>
+  </div>
+  <div class="card-foot">
+    <p class="desc">右缘一条内容缩略：每行一根 1.5px 细线，外框是当前视口。<b>点空白处跳过去，抓住视口框拖动可以细扫</b>，等于一个可读的结构图。</p>
+    <p class="ops">点缩略图跳转 / 拖视口框 / 拖内容 / 点上下边缘 / 键盘</p>
+    <p class="cost"><b>代价：</b>要渲染缩略，行数多时开销大。<b> GPUI：</b>可行，但需逐行映射，成本最高。</p>
+  </div>
+</article>
+
+<!-- 05 -->
+<article class="card" data-key="hair">
+  <div class="card-top"><span class="num">05</span><span class="name">顶部发丝</span><span class="tag">scrubbable hairline</span></div>
+  <div class="stage">
+    <div class="chev up">▲</div><div class="chev dn">▼</div>
+    <div class="scroller"><div class="rows"></div></div>
+    <div class="hair"><div class="hair-fill"></div><div class="hair-dot"></div></div>
+    <div class="hair-hit" data-nopage title="点或拖这条 18px 高的热区"></div>
+  </div>
+  <div class="card-foot">
+    <p class="desc">进度线转到水平方向，贴在内容区顶边：1px 红线从左往右填，头部一颗白点。上面压了一条 <b>18px 高的透明热区</b>，点哪跳哪、按住横拖连续走 —— 细线只是好看，命中区不细。</p>
+    <p class="ops">点 / 拖顶边热区 / 拖内容 / 点上下边缘 / 键盘</p>
+    <p class="cost"><b>代价：</b>和吸顶表头争顶边；横轴与内容纵轴方向不一致。<b> GPUI：</b>两个 div + 一条热区。</p>
+  </div>
+</article>
+
+<!-- 06 -->
+<article class="card" data-key="glow">
+  <div class="card-top"><span class="num">06</span><span class="name">边缘光斑</span><span class="tag">draggable light</span></div>
+  <div class="stage">
+    <div class="chev up">▲</div><div class="chev dn">▼</div>
+    <div class="scroller"><div class="rows"></div></div>
+    <div class="glow"></div><div class="glow core"></div>
+    <div class="glow-hit" data-nopage title="抓住这团光上下拖"></div>
+  </div>
+  <div class="card-foot">
+    <p class="desc">没有轨道、没有长度。右缘一团光跟着位置走，中心一颗白点。鼠标进舞台它就亮起来，<b>直接抓住光团上下拖</b>就等于拖动整个列表 —— 它既是指示器，也是把手。</p>
+    <p class="ops">抓住光斑上下拖 / 拖内容 / 点上下边缘 / 键盘</p>
+    <p class="cost"><b>代价：</b>只能表达「在哪」，表达不了「多长」。<b> GPUI：</b>radial gradient + Pointer 事件。</p>
+  </div>
+</article>
+
+<!-- 07 -->
+<article class="card" data-key="rail">
+  <div class="card-top"><span class="num">07</span><span class="name">章节刻度</span><span class="tag">section rail</span></div>
+  <div class="stage">
+    <div class="chev up">▲</div><div class="chev dn">▼</div>
+    <div class="scroller"><div class="rows"></div></div>
+    <div class="rail" data-nopage title="点某节跳过去，按住可拖"></div>
+  </div>
+  <div class="card-foot">
+    <p class="desc">不按像素，按章节：只有 6 根短刻度，当前节变长变红并浮出章节名。整条轨道可点可拖，点某根刻度就跳到那一节，按住则连续走。</p>
+    <p class="ops">点刻度跳章节 / 拖轨道连续走 / 拖内容 / 键盘</p>
+    <p class="cost"><b>代价：</b>依赖内容有分节；长度差很多时刻度不均匀。<b> GPUI：</b>需要各节偏移，中等成本。</p>
+  </div>
+</article>
+
+<!-- 08 -->
+<article class="card" data-key="chip">
+  <div class="card-top"><span class="num">08</span><span class="name">章节胶囊</span><span class="tag">prev / next</span></div>
+  <div class="stage">
+    <div class="chev up">▲</div><div class="chev dn">▼</div>
+    <div class="scroller"><div class="rows"></div></div>
+    <div class="chip" data-nopage>
+      <button class="hbtn prev" title="上一节">◀</button>
+      <span class="sec">01 概览</span>
+      <span class="pos">1 / 6</span>
+      <button class="hbtn next" title="下一节">▶</button>
+    </div>
+  </div>
+  <div class="card-foot">
+    <p class="desc">底部一枚胶囊写「现在在哪一节」。它更是个<b>遥控器</b>：◀ ▶ 按节前进后退，不需要滚。鼠标进舞台就浮出，光标停 1.2 秒后变淡但按钮仍可点。</p>
+    <p class="ops">点 ◀ ▶ 切上一节 / 下一节  · 拖内容 / 键盘</p>
+    <p class="cost"><b>代价：</b>看不到段内进度；短暂遮挡内容。<b> GPUI：</b>与 02 同构，多一份章节表。</p>
+  </div>
+</article>
+
+<!-- 09 -->
+<article class="card" data-key="tension">
+  <div class="card-top"><span class="num">09</span><span class="name">边界张力</span><span class="tag">edge glow</span></div>
+  <div class="stage">
+    <div class="chev up">▲</div><div class="chev dn">▼</div>
+    <div class="scroller"><div class="rows"></div></div>
+    <div class="veil top"></div><div class="veil bottom"></div>
+    <div class="tension top"></div><div class="tension bottom"></div>
+    <div class="at-edge top" data-nopage title="回到顶部">▲ Top</div>
+    <div class="at-edge bottom" data-nopage title="到底部">▼ End</div>
+  </div>
+  <div class="card-foot">
+    <p class="desc">01 的渐隐 + 到头反馈：到最顶 / 最底时对应边缘亮起呼吸红光，并浮出一枚可点的 <b>TOP / END</b> 标签（点它直接跳到另一头），用「到头」的触感代替位置条。</p>
+    <p class="ops">点 TOP / End 跳另一头 / 拖内容 / 点上下边缘 / 键盘</p>
+    <p class="cost"><b>代价：</b>过程中仍然无指示。<b> GPUI：</b>渐隐 + 边缘条 + 两个标签。</p>
+  </div>
+</article>
+
+<!-- 10 -->
+<article class="card" data-key="led">
+  <div class="card-top"><span class="num">10</span><span class="name">LED 刻度</span><span class="tag">26 ticks</span></div>
+  <div class="stage">
+    <div class="chev up">▲</div><div class="chev dn">▼</div>
+    <div class="scroller"><div class="rows"></div></div>
+    <div class="led" data-nopage title="点哪跳哪，按住可拖"></div>
+  </div>
+  <div class="card-foot">
+    <p class="desc">右缘 26 根 2px 短横线，滚过的依次点亮成暗红，当前位置那根拉长成亮红。整列同样是可点可拖的定位带，点哪跳哪。</p>
+    <p class="ops">点 / 拖右侧刻度列 / 拖内容 / 点上下边缘 / 键盘</p>
+    <p class="cost"><b>代价：</b>刻度密度固定，长文档显得粗。<b> GPUI：</b>26 个 div + Pointer 事件。</p>
+  </div>
+</article>
+
+</div>
+
+<div class="bar">
+  <span class="lbl">Pick</span>
+  <span id="pick">还没选 · 点任意卡片顶栏</span>
+  <span class="sp"></span>
+  <button id="reset">清除选择</button>
+</div>
+
+<script>
+/* =======================================================================
+   假的进程数据：所有卡片共用同一份，方便横向对比
+   ======================================================================= */
+const NAMES = ["gnome-shell","Xorg","firefox-bin","code","node","pipewire",
+  "tracker-miner-fs-3","gjs","ibus-daemon","systemd","dbus-daemon",
+  "gnome-terminal-","nautilus","evolution-data-","pulseaudio","gdm",
+  "chrome_crashpad","WirePlumber","gnome-software","gvfsd"];
+const SECTIONS = ["概览","进程","网络","存储","服务","尾部"];
+
+let seed = 20251113;
+const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+
+let ROWS_CACHE = null;
+function makeRows(){
+  if (ROWS_CACHE) return ROWS_CACHE;
+  let html = "", pid = 812;
+  for (let s = 0; s < SECTIONS.length; s++) {
+    html += `<div class="sechead">${String(s+1).padStart(2,"0")} · ${SECTIONS[s]}</div>`;
+    for (let i = 0; i < 9; i++) {
+      pid += Math.floor(rnd()*90) + 12;
+      const name = NAMES[Math.floor(rnd()*NAMES.length)];
+      html += `<div class="row"><span class="pid">${pid}</span><span class="nm">${name}</span>` +
+              `<span class="cpu">${(rnd()*14).toFixed(1)}</span>` +
+              `<span class="mem">${Math.floor(rnd()*900 + 24)}M</span></div>`;
+    }
+  }
+  return (ROWS_CACHE = html);
+}
+
+/* =======================================================================
+   通用工具
+   ======================================================================= */
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function smoothTo(ctx, y){
+  ctx.sc.scrollTo({ top: clamp(y, 0, ctx.max()), behavior: REDUCED ? "auto" : "smooth" });
+}
+function scrollBy(ctx, dy){ smoothTo(ctx, ctx.sc.scrollTop + dy); }
+function pageStep(ctx){ return Math.max(90, Math.round((ctx.sc.clientHeight - 34) * 0.88)); }
+
+/* 拖动指示器 scrub：把舞台上的 y（或 x）映射成进度 */
+function scrub(ctx, el, axis){
+  const pad = 16;
+  const apply = ev => {
+    const r = ctx.stage.getBoundingClientRect();
+    const p = axis === "x"
+      ? clamp((ev.clientX - r.left) / r.width, 0, 1)
+      : clamp((ev.clientY - r.top - pad) / Math.max(1, r.height - pad * 2), 0, 1);
+    ctx.sc.scrollTop = p * ctx.max();
+  };
+  let active = false;
+  el.addEventListener("pointerdown", ev => {
+    if (ev.button !== 0) return;
+    ev.preventDefault(); ev.stopPropagation();
+    active = true;
+    try { el.setPointerCapture(ev.pointerId); } catch (_) {}
+    ctx.card.classList.add("grabbing");
+    apply(ev);
+  });
+  el.addEventListener("pointermove", ev => { if (active) apply(ev); });
+  const end = () => {
+    if (!active) return;
+    active = false;
+    ctx.card.classList.remove("grabbing");
+    ctx.dragged = true;                       // 让随后的 click 不当成翻屏
+    setTimeout(() => { ctx.dragged = false; }, 0);
+  };
+  el.addEventListener("pointerup", end);
+  el.addEventListener("pointercancel", end);
+}
+
+/* 按住内容上下拖 = 滚动（滚轮坏了的主力操作） */
+function dragContent(ctx){
+  let active = false, startY = 0, startTop = 0, moved = 0;
+  ctx.sc.addEventListener("pointerdown", ev => {
+    if (ev.button !== 0) return;
+    active = true; moved = 0; startY = ev.clientY; startTop = ctx.sc.scrollTop;
+    try { ctx.sc.setPointerCapture(ev.pointerId); } catch (_) {}
+  });
+  ctx.sc.addEventListener("pointermove", ev => {
+    if (!active) return;
+    const dy = ev.clientY - startY;
+    if (Math.abs(dy) < 3) return;
+    moved = 1;
+    ctx.card.classList.add("grabbing");
+    ctx.sc.scrollTop = startTop - dy;
+  });
+  const end = () => {
+    if (!active) return;
+    active = false;
+    ctx.card.classList.remove("grabbing");
+    if (moved) { ctx.dragged = true; setTimeout(() => { ctx.dragged = false; }, 0); }
+  };
+  ctx.sc.addEventListener("pointerup", end);
+  ctx.sc.addEventListener("pointercancel", end);
+}
+
+/* 点舞台上下边缘 = 翻屏 */
+function edgePaging(ctx){
+  ctx.stage.addEventListener("click", ev => {
+    if (ctx.dragged) return;
+    if (ev.target.closest("[data-nopage]")) return;
+    const r = ctx.stage.getBoundingClientRect();
+    const y = (ev.clientY - r.top) / r.height;
+    if (y < 0.2) scrollBy(ctx, -pageStep(ctx));
+    else if (y > 0.8) scrollBy(ctx, pageStep(ctx));
+  });
+}
+
+/* 键盘：卡片聚焦后可用 */
+function keyboard(ctx){
+  ctx.card.tabIndex = 0;
+  ctx.stage.addEventListener("pointerdown", () => ctx.card.focus({ preventScroll: true }), true);
+  ctx.card.addEventListener("keydown", ev => {
+    const step = pageStep(ctx);
+    const table = { ArrowDown: 46, ArrowUp: -46, PageDown: step, PageUp: -step };
+    const d = table[ev.key];
+    if (d !== undefined) { ev.preventDefault(); scrollBy(ctx, d); }
+    else if (ev.key === "Home") { ev.preventDefault(); smoothTo(ctx, 0); }
+    else if (ev.key === "End") { ev.preventDefault(); smoothTo(ctx, ctx.max()); }
+  });
+}
+
+/* 「滚动时才出现」→ 改成「鼠标在舞台里就出现」 */
+function hoverReveal(ctx, els){
+  const on = () => els.forEach(e => e.classList.add("on"));
+  const off = () => els.forEach(e => e.classList.remove("on"));
+  ctx.stage.addEventListener("pointerenter", on);
+  ctx.stage.addEventListener("pointerleave", off);
+  // 进页面先亮一次，告诉人「这里有个能点的东西」
+  setTimeout(on, 400);
+  setTimeout(() => { if (!ctx.stage.matches(":hover")) off(); }, 2600);
+  return { on, off };
+}
+
+/* =======================================================================
+   挂载
+   ======================================================================= */
+function mount(key, fn){
+  document.querySelectorAll(`.card[data-key="${key}"]`).forEach(card => {
+    const sc = card.querySelector(".scroller");
+    sc.querySelector(".rows").innerHTML = makeRows();
+
+    const ctx = {
+      card, sc, stage: card.querySelector(".stage"), dragged: false,
+      max: () => Math.max(1, sc.scrollHeight - sc.clientHeight),
+      prog: () => clamp(sc.scrollTop / ctx.max(), 0, 1),
+      onScroll: h => sc.addEventListener("scroll", h, { passive: true }),
+      onResize: h => window.addEventListener("resize", h)
+    };
+
+    // 各章节在滚动内容里的绝对偏移（sticky 会干扰 offsetTop，所以用 rect 算）
+    const scTop = sc.getBoundingClientRect().top;
+    ctx.secs = [...sc.querySelectorAll(".sechead")].map(
+      el => el.getBoundingClientRect().top - scTop
+    );
+    ctx.secOf = p => {
+      const y = p * ctx.max();
+      let i = 0;
+      ctx.secs.forEach((o, k) => { if (y >= o - 2) i = k; });
+      return i;
+    };
+
+    keyboard(ctx); dragContent(ctx); edgePaging(ctx);
+    fn(ctx);
+  });
+}
+
+/* ======================================================================= */
+/* 01 边缘渐隐                                                            */
+/* ======================================================================= */
+mount("fade", ctx => {
+  const top = ctx.card.querySelector(".veil.top");
+  const bottom = ctx.card.querySelector(".veil.bottom");
+  const upd = () => {
+    const m = ctx.max(), y = ctx.sc.scrollTop;
+    top.style.opacity = Math.min(1, y / 46);
+    bottom.style.opacity = Math.min(1, (m - y) / 46);
+  };
+  ctx.onScroll(upd); ctx.onResize(upd); upd();
+});
+
+/* ======================================================================= */
+/* 02 角标百分比 + ▲▼ 连翻                                                */
+/* ======================================================================= */
+mount("hud", ctx => {
+  const hud = ctx.card.querySelector(".hud");
+  const val = hud.querySelector(".val");
+  const upd = () => { val.textContent = Math.round(ctx.prog() * 100) + "%"; };
+
+  // 按住连翻
+  const hold = (btn, dir) => {
+    let t1, t2;
+    const fire = () => scrollBy(ctx, dir * Math.round(pageStep(ctx) * 0.6));
+    btn.addEventListener("pointerdown", ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      fire();
+      t1 = setTimeout(() => { t2 = setInterval(fire, 130); }, 420);
+    });
+    const stop = () => { clearTimeout(t1); clearInterval(t2); };
+    ["pointerup", "pointerleave", "pointercancel"].forEach(k => btn.addEventListener(k, stop));
+  };
+  hold(hud.querySelector(".up"), -1);
+  hold(hud.querySelector(".dn"), +1);
+
+  hoverReveal(ctx, [hud]);
+  ctx.onScroll(upd); ctx.onResize(upd); upd();
+});
+
+/* ======================================================================= */
+/* 03 刻度点                                                              */
+/* ======================================================================= */
+mount("dots", ctx => {
+  const box = ctx.card.querySelector(".ticks");
+  const N = 12;
+  const ticks = Array.from({ length: N }, () => {
+    const t = document.createElement("div");
+    t.className = "tick";
+    box.appendChild(t);
+    return t;
+  });
+  const upd = () => {
+    const cur = Math.round(ctx.prog() * (N - 1));   // 视觉位置与 scrub 位置一致
+    ticks.forEach((t, i) => {
+      t.classList.toggle("on", i === cur);
+      t.classList.toggle("past", i < cur);
+    });
+  };
+  scrub(ctx, box, "y");
+  ctx.onScroll(upd); ctx.onResize(upd); upd();
+});
+
+/* ======================================================================= */
+/* 04 迷你地图：点空白跳转，抓视口框拖动                                  */
+/* ======================================================================= */
+mount("mini", ctx => {
+  const mini = ctx.card.querySelector(".mini");
+  const vp = mini.querySelector(".mini-vp");
+
+  let inner = "";
+  const LINES = 40;
+  for (let i = 0; i < LINES; i++) {
+    const w = 38 + ((i * 37) % 62);
+    const o = (0.05 + ((i * 53) % 100) / 100 * 0.16).toFixed(3);
+    inner += `<i style="top:${(i / LINES * 100).toFixed(2)}%;width:${w}%;background:rgba(255,255,255,${o})"></i>`;
+  }
+  mini.insertAdjacentHTML("afterbegin", inner);
+
+  const pad = 5;
+  const trackH = () => mini.clientHeight - pad * 2;
+  const vpTop = () => vp.offsetTop - pad;                 // 相对轨道
+  const vpH = () => Math.max(16, trackH() * Math.min(1, ctx.sc.clientHeight / ctx.sc.scrollHeight));
+
+  const upd = () => {
+    vp.style.height = vpH() + "px";
+    vp.style.top = (pad + ctx.prog() * (trackH() - vpH())) + "px";
+  };
+
+  let drag = false, grabOffset = 0;
+  const setFromY = ev => {
+    const r = mini.getBoundingClientRect();
+    const p = clamp((ev.clientY - r.top - pad - grabOffset) / Math.max(1, trackH() - vpH()), 0, 1);
+    ctx.sc.scrollTop = p * ctx.max();
+  };
+  mini.addEventListener("pointerdown", ev => {
+    if (ev.button !== 0) return;
+    ev.preventDefault(); ev.stopPropagation();
+    const r = mini.getBoundingClientRect();
+    const localY = ev.clientY - r.top - pad;
+    const inVp = localY >= vpTop() && localY <= vpTop() + vpH();
+    grabOffset = inVp ? localY - vpTop() : vpH() / 2;   // 抓框 = 按相对位置；点空白 = 居中跳
+    drag = true;
+    try { mini.setPointerCapture(ev.pointerId); } catch (_) {}
+    ctx.card.classList.add("grabbing");
+    setFromY(ev);            // 在框内 = 按住的相对位置；点空白 = 视口居中过来
+  });
+  mini.addEventListener("pointermove", ev => { if (drag) setFromY(ev); });
+  const end = () => {
+    if (!drag) return;
+    drag = false;
+    ctx.card.classList.remove("grabbing");
+    ctx.dragged = true; setTimeout(() => { ctx.dragged = false; }, 0);
+  };
+  mini.addEventListener("pointerup", end);
+  mini.addEventListener("pointercancel", end);
+
+  ctx.onScroll(upd); ctx.onResize(upd); upd();
+});
+
+/* ======================================================================= */
+/* 05 顶部发丝                                                            */
+/* ======================================================================= */
+mount("hair", ctx => {
+  const fill = ctx.card.querySelector(".hair-fill");
+  const dot = ctx.card.querySelector(".hair-dot");
+  const upd = () => {
+    const p = ctx.prog() * 100;
+    fill.style.width = p + "%";
+    dot.style.left = p + "%";
+  };
+  scrub(ctx, ctx.card.querySelector(".hair-hit"), "x");
+  ctx.onScroll(upd); ctx.onResize(upd); upd();
+});
+
+/* ======================================================================= */
+/* 06 边缘光斑（可抓）                                                    */
+/* ======================================================================= */
+mount("glow", ctx => {
+  const glow = ctx.card.querySelector(".glow:not(.core)");
+  const core = ctx.card.querySelector(".glow.core");
+  const H = 140, CORE = 22;
+
+  const place = () => {
+    const stageH = ctx.stage.clientHeight;
+    const p = ctx.prog();
+    glow.style.transform = `translateY(${p * (stageH - H)}px)`;
+    core.style.transform = `translateY(${p * (stageH - CORE)}px)`;
+  };
+  hoverReveal(ctx, [glow, core]);
+  scrub(ctx, ctx.card.querySelector(".glow-hit"), "y");
+
+  ctx.onScroll(place); ctx.onResize(place); place();
+});
+
+/* ======================================================================= */
+/* 07 章节刻度                                                            */
+/* ======================================================================= */
+mount("rail", ctx => {
+  const rail = ctx.card.querySelector(".rail");
+  const N = SECTIONS.length;
+  const ticks = [], labels = [];
+  for (let i = 0; i < N; i++) {
+    const t = document.createElement("div");
+    t.className = "rail-t";
+    t.style.top = (i / N * 100) + "%";
+    const l = document.createElement("div");
+    l.className = "rail-l";
+    l.style.top = (i / N * 100) + "%";
+    l.textContent = String(i + 1).padStart(2, "0") + " " + SECTIONS[i];
+    rail.append(t, l);
+    ticks.push(t); labels.push(l);
+  }
+  const upd = () => {
+    const cur = ctx.secOf(ctx.prog());
+    ticks.forEach((t, i) => t.classList.toggle("on", i === cur));
+    labels.forEach((l, i) => l.classList.toggle("on", i === cur));
+  };
+  scrub(ctx, rail, "y");
+  ctx.onScroll(upd); ctx.onResize(upd); upd();
+});
+
+/* ======================================================================= */
+/* 08 章节胶囊 ◀ ▶                                                        */
+/* ======================================================================= */
+mount("chip", ctx => {
+  const chip = ctx.card.querySelector(".chip");
+  const sec = chip.querySelector(".sec");
+  const pos = chip.querySelector(".pos");
+  const n = SECTIONS.length;
+
+  const upd = () => {
+    const i = ctx.secOf(ctx.prog());
+    sec.textContent = String(i + 1).padStart(2, "0") + " " + SECTIONS[i];
+    pos.textContent = `${i + 1} / ${n}`;
+  };
+  const go = dir => {
+    const i = clamp(ctx.secOf(ctx.prog()) + dir, 0, n - 1);
+    smoothTo(ctx, ctx.secs[i] + 1);
+  };
+  chip.querySelector(".prev").addEventListener("click", ev => { ev.stopPropagation(); go(-1); });
+  chip.querySelector(".next").addEventListener("click", ev => { ev.stopPropagation(); go(+1); });
+
+  hoverReveal(ctx, [chip]);
+  ctx.onScroll(upd); ctx.onResize(upd); upd();
+});
+
+/* ======================================================================= */
+/* 09 边界张力 + TOP / End 可点                                           */
+/* ======================================================================= */
+mount("tension", ctx => {
+  const top = ctx.card.querySelector(".veil.top");
+  const bottom = ctx.card.querySelector(".veil.bottom");
+  const tTop = ctx.card.querySelector(".tension.top");
+  const tBot = ctx.card.querySelector(".tension.bottom");
+  const eTop = ctx.card.querySelector(".at-edge.top");
+  const eBot = ctx.card.querySelector(".at-edge.bottom");
+
+  const upd = () => {
+    const m = ctx.max(), y = ctx.sc.scrollTop;
+    top.style.opacity = Math.min(1, y / 46);
+    bottom.style.opacity = Math.min(1, (m - y) / 46);
+    const atTop = y < 4, atBot = y > m - 4;
+    tTop.classList.toggle("on", atTop); eTop.classList.toggle("on", atTop);
+    tBot.classList.toggle("on", atBot); eBot.classList.toggle("on", atBot);
+  };
+  eTop.addEventListener("click", ev => { ev.stopPropagation(); smoothTo(ctx, ctx.max()); });
+  eBot.addEventListener("click", ev => { ev.stopPropagation(); smoothTo(ctx, 0); });
+
+  ctx.onScroll(upd); ctx.onResize(upd); upd();
+});
+
+/* ======================================================================= */
+/* 10 LED 刻度                                                            */
+/* ======================================================================= */
+mount("led", ctx => {
+  const led = ctx.card.querySelector(".led");
+  const N = 26;
+  const bars = Array.from({ length: N }, () => {
+    const b = document.createElement("i");
+    led.appendChild(b);
+    return b;
+  });
+  const upd = () => {
+    const lit = ctx.prog() * N;
+    bars.forEach((b, i) => {
+      b.classList.toggle("on", i < lit);
+      b.classList.toggle("cur", i === Math.min(N - 1, Math.floor(lit)));
+    });
+  };
+  scrub(ctx, led, "y");
+  ctx.onScroll(upd); ctx.onResize(upd); upd();
+});
+
+/* =======================================================================
+   选中交互
+   ======================================================================= */
+const KEY = "gnous-scroll-indicator-pick";
+const pickLabel = document.getElementById("pick");
+
+function pick(card){
+  document.querySelectorAll(".card").forEach(c => c.classList.toggle("picked", c === card));
+  pickLabel.innerHTML = `<b>${card.querySelector(".num").textContent} · ` +
+    `${card.querySelector(".name").textContent}</b>`;
+  localStorage.setItem(KEY, card.dataset.key);
+}
+
+document.querySelectorAll(".card").forEach(card => {
+  card.querySelector(".card-top").addEventListener("click", () => pick(card));
+});
+
+document.getElementById("reset").addEventListener("click", () => {
+  document.querySelectorAll(".card").forEach(c => c.classList.remove("picked"));
+  pickLabel.textContent = "还没选 · 点任意卡片顶栏";
+  localStorage.removeItem(KEY);
+});
+
+const saved = localStorage.getItem(KEY);
+if (saved) {
+  const card = document.querySelector(`.card[data-key="${saved}"]`);
+  if (card) pick(card);
+}
+
+/* 评审用：?pos=0.62 让所有滚动区跳到该进度 */
+const q = new URLSearchParams(location.search).get("pos");
+if (q !== null) {
+  const p = Math.min(1, Math.max(0, parseFloat(q) || 0));
+  document.querySelectorAll(".scroller").forEach(sc => {
+    sc.scrollTop = p * (sc.scrollHeight - sc.clientHeight);
+    sc.dispatchEvent(new Event("scroll"));
+  });
+}
+</script>
+</body>
+</html>

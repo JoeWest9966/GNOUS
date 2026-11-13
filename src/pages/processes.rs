@@ -6,18 +6,18 @@
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    App as GpuiApp, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    PathBuilder, Stateful, StatefulInteractiveElement as _, Styled, WeakEntity, Window, canvas,
-    div, point, px, relative, rgba,
+    App as GpuiApp, Div, FontWeight, InteractiveElement as _, IntoElement, MouseButton,
+    ParentElement as _, PathBuilder, Stateful, StatefulInteractiveElement as _, Styled, WeakEntity,
+    Window, canvas, div, point, px, relative, rgba,
 };
 
 use crate::proc::{self, Process, Snapshot};
 use crate::table_state::{Scope, SortKey};
 use crate::theme::{
-    accent, alpha, black, caps, dim, h, line, line_faint, line_strong, muted, ok, text, txt, v,
-    warn,
+    accent, alpha, black, caps, dim, h, line, line_faint, line_strong, muted, ok, surface_2, text,
+    txt, v, warn,
 };
-use crate::{App, Overview};
+use crate::{App, Overview, ProcAction, ProcOverlays};
 
 /// Entry point from `content()`.
 pub fn body(view: &str, overview: &Overview, weak: &WeakEntity<App>) -> Div {
@@ -177,7 +177,7 @@ fn table(overview: &Overview, weak: &WeakEntity<App>) -> Div {
             overview,
             "进程",
             format!(
-                "{} 个进程 · {} 个线程 · 按 {} {} · 点击行查看详情",
+                "{} 个进程 · {} 个线程 · 按 {} {} · 点击行查看详情 · 右键更多操作",
                 snap.processes.len(),
                 snap.threads,
                 table.sort.label(),
@@ -186,49 +186,66 @@ fn table(overview: &Overview, weak: &WeakEntity<App>) -> Div {
         ))
         .child(summary(overview))
         .child(table_toolbar(overview, weak, visible.len()))
-        .child(table_header(overview, weak))
+        .child(table_header(overview, weak).pr(px(26.)))
         .child(
-            v().id("proc-rows")
+            v().relative()
                 .flex_1()
                 .min_h_0()
-                .overflow_y_scroll()
-                .children(visible.iter().enumerate().map(|(index, process)| {
-                    table_row(
-                        index,
-                        process,
-                        overview.proc_selected == Some(process.pid),
-                        overview.proc_kill_armed == Some(process.pid),
-                        weak,
-                    )
-                }))
                 .child(
-                    h().justify_between()
-                        .py(px(18.))
-                        .pb(px(28.))
-                        .text_size(px(10.5))
-                        .text_color(dim())
-                        .child(txt(
-                            format!("显示 {} / {} 个进程", visible.len(), snap.processes.len()),
-                            10.5,
-                            FontWeight::NORMAL,
-                            dim(),
-                        ))
-                        .child(txt(
-                            format!(
-                                "CPU {:.1}% · 内存 {:.1} / {:.0} GB · 负载 {:.2}",
-                                snap.cpu_total,
-                                snap.mem_used_kb as f32 / 1024. / 1024.,
-                                snap.mem_total_kb as f32 / 1024. / 1024.,
-                                snap.load.0
-                            ),
-                            10.5,
-                            FontWeight::NORMAL,
-                            dim(),
-                        )),
-                ),
+                    v().id("proc-rows")
+                        .flex_1()
+                        .min_h_0()
+                        .pr(px(26.))
+                        .overflow_y_scroll()
+                        .track_scroll(overview.table_led.handle())
+                        .children(visible.iter().enumerate().map(|(index, process)| {
+                            table_row(
+                                index,
+                                process,
+                                overview.proc_selected == Some(process.pid),
+                                weak,
+                            )
+                        }))
+                        .child(
+                            h().justify_between()
+                                .py(px(18.))
+                                .pb(px(28.))
+                                .text_size(px(10.5))
+                                .text_color(dim())
+                                .child(txt(
+                                    format!(
+                                        "显示 {} / {} 个进程",
+                                        visible.len(),
+                                        snap.processes.len()
+                                    ),
+                                    10.5,
+                                    FontWeight::NORMAL,
+                                    dim(),
+                                ))
+                                .child(txt(
+                                    format!(
+                                        "CPU {:.1}% · 内存 {:.1} / {:.0} GB · 负载 {:.2}",
+                                        snap.cpu_total,
+                                        snap.mem_used_kb as f32 / 1024. / 1024.,
+                                        snap.mem_total_kb as f32 / 1024. / 1024.,
+                                        snap.load.0
+                                    ),
+                                    10.5,
+                                    FontWeight::NORMAL,
+                                    dim(),
+                                )),
+                        ),
+                )
+                .child(crate::led_column("led-table", overview.table_led, 4., weak)),
         )
         .when_some(selected, |this, process| {
-            this.child(detail_panel(overview, Some(process), weak, "表格详情"))
+            this.child(detail_panel(
+                overview,
+                Some(process),
+                weak,
+                "表格详情",
+                true,
+            ))
         })
 }
 
@@ -430,14 +447,13 @@ fn table_row(
     index: usize,
     process: &Process,
     selected: bool,
-    armed: bool,
     weak: &WeakEntity<App>,
 ) -> Stateful<Div> {
     let pid = process.pid;
     let sel_weak = weak.clone();
+    let menu_press_weak = weak.clone();
     let kill_weak = weak.clone();
     let force_weak = weak.clone();
-    let kill_pid = process.pid;
     h().items_center()
         .id(("proc", index))
         .cursor_pointer()
@@ -448,6 +464,14 @@ fn table_row(
         .hover(|this| this.bg(alpha(0xffffff06)))
         .on_click(move |_, _, cx| {
             let _ = sel_weak.update(cx, |app, cx| app.select_process(pid, cx));
+        })
+        .on_mouse_down(MouseButton::Right, move |event, _, cx| {
+            // Open on press, like a native context menu; `on_click` also
+            // handles the release so the menu works either way.
+            let pos = event.position;
+            let _ = menu_press_weak.update(cx, |app, cx| {
+                app.toggle_process_menu(pid, pos.x.as_f32(), pos.y.as_f32(), cx)
+            });
         })
         .child(
             h().flex_1()
@@ -516,20 +540,14 @@ fn table_row(
                         .px(px(8.))
                         .py(px(4.))
                         .border(px(1.))
-                        .border_color(if armed { accent() } else { line_strong() })
-                        .text_color(if armed { accent() } else { muted() })
+                        .border_color(line_strong())
                         .hover(|this| this.border_color(accent()).text_color(accent()))
                         .on_click(move |_, _, cx| {
-                            let _ =
-                                kill_weak.update(cx, |app, cx| app.arm_kill(kill_pid, false, cx));
+                            let _ = kill_weak.update(cx, |app, cx| {
+                                app.request_signal(pid, ProcAction::Terminate, cx)
+                            });
                         })
-                        .child(caps(
-                            if armed { "确认" } else { "结束" },
-                            9.,
-                            FontWeight::NORMAL,
-                            if armed { accent() } else { muted() },
-                            0.12,
-                        )),
+                        .child(caps("结束", 9., FontWeight::NORMAL, muted(), 0.12)),
                 )
                 .child(
                     div()
@@ -538,11 +556,12 @@ fn table_row(
                         .px(px(7.))
                         .py(px(4.))
                         .border(px(1.))
-                        .border_color(if armed { accent() } else { line_strong() })
+                        .border_color(line_strong())
                         .hover(|this| this.border_color(accent()).text_color(accent()))
                         .on_click(move |_, _, cx| {
-                            let _ =
-                                force_weak.update(cx, |app, cx| app.arm_kill(kill_pid, true, cx));
+                            let _ = force_weak.update(cx, |app, cx| {
+                                app.request_signal(pid, ProcAction::Kill, cx)
+                            });
                         })
                         .child(caps("强杀", 9., FontWeight::NORMAL, dim(), 0.12)),
                 ),
@@ -859,7 +878,7 @@ fn memory(overview: &Overview, weak: &WeakEntity<App>) -> Div {
                         })),
                 ),
         )
-        .child(detail_panel(overview, selected, weak, "选中进程"))
+        .child(detail_panel(overview, selected, weak, "选中进程", false))
 }
 
 /// Slice-and-dice treemap; alternating direction keeps blocks readable.
@@ -905,20 +924,416 @@ fn tile(items: &[(u32, String, u64)], x: f32, y: f32, w: f32, h: f32) -> Vec<Blo
     }
 }
 
+/// Floating context menu + modal confirmation + toast, drawn above the table.
+///
+/// The root window owns keyboard shortcuts; these overlays only own their own
+/// mouse interactions. `ProcOverlays` is owned data so callbacks never borrow
+/// the render stack.
+pub fn overlays(state: ProcOverlays, weak: &WeakEntity<App>) -> Div {
+    let ProcOverlays {
+        dialog,
+        menu,
+        toast,
+        selected,
+        paused,
+        frozen,
+        viewport,
+        menu_name,
+    } = state;
+    // A zero-footprint container. The overlays themselves are absolutely
+    // positioned against the window root (the only `relative()` ancestor), so
+    // this wrapper must NOT be full-size: a full-size hitbox here would sit
+    // above the page and swallow every click on the table behind it.
+    let mut root = div();
+
+    if let Some(dialog) = dialog {
+        root = root.child(confirm_dialog(dialog, weak));
+    } else if let Some((pid, x, y)) = menu {
+        let (w, h) = viewport;
+        let menu_w = 224.;
+        let menu_h = 380.;
+        let left = x.clamp(8., (w - menu_w - 12.).max(8.));
+        let top = y.clamp(8., (h - menu_h - 12.).max(8.));
+        // No full-screen backdrop: an occluding scrim would receive the
+        // mouse-down before a menu item's click listener fires and close the
+        // menu too early. `context_menu` closes itself on any outside press.
+        root = root.child(context_menu(
+            pid, &menu_name, left, top, paused, frozen, selected, weak,
+        ));
+    }
+
+    if let Some(toast) = toast {
+        root = root.child(
+            div()
+                .id("proc-toast")
+                .absolute()
+                .bottom(px(22.))
+                .left(px(88.))
+                .px(px(14.))
+                .py(px(9.))
+                .bg(surface_2())
+                .border(px(1.))
+                .border_color(line_strong())
+                .child(txt(toast, 10.5, FontWeight::NORMAL, text())),
+        );
+    }
+    root
+}
+
+/// Modal-ish confirmation: dark scrim + centered card. Every destructive
+/// signal goes through this; the old "click the same button twice" is gone.
+fn confirm_dialog(dialog: crate::ProcDialog, weak: &WeakEntity<App>) -> Stateful<Div> {
+    let confirm = weak.clone();
+    let cancel = weak.clone();
+    let scrim = weak.clone();
+    let action = dialog.action;
+    let danger = action.danger();
+    h().id("confirm-scrim")
+        .absolute()
+        .top(px(0.))
+        .left(px(0.))
+        .size_full()
+        .bg(alpha(0x000000b8))
+        .occlude()
+        .justify_center()
+        .items_center()
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            let _ = scrim.update(cx, |app, cx| app.cancel_signal(cx));
+        })
+        .child(
+            v().id("confirm-card")
+                .w(px(440.))
+                .bg(black())
+                .border(px(1.))
+                .border_color(if danger { accent() } else { line_strong() })
+                .p(px(28.))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(caps("确认操作", 10., FontWeight::NORMAL, dim(), 0.26))
+                .child(txt(action.title(), 24., FontWeight::LIGHT, text()).mt(px(12.)))
+                .child(
+                    txt(
+                        format!("{} · PID {}", dialog.name, dialog.pid),
+                        11.,
+                        FontWeight::NORMAL,
+                        muted(),
+                    )
+                    .mt(px(6.)),
+                )
+                .child(
+                    div()
+                        .mt(px(18.))
+                        .p(px(12.))
+                        .bg(surface_2())
+                        .border(px(1.))
+                        .border_color(line())
+                        .child(caps("命令行", 9., FontWeight::NORMAL, dim(), 0.2))
+                        .child(
+                            txt(
+                                if dialog.command.is_empty() {
+                                    "—（内核线程 / 已退出）".to_string()
+                                } else {
+                                    dialog.command.clone()
+                                },
+                                10.5,
+                                FontWeight::NORMAL,
+                                muted(),
+                            )
+                            .whitespace_normal()
+                            .line_height(px(16.))
+                            .mt(px(7.)),
+                        ),
+                )
+                .child(
+                    txt(
+                        action.warning(),
+                        10.5,
+                        FontWeight::NORMAL,
+                        if danger { warn() } else { muted() },
+                    )
+                    .whitespace_normal()
+                    .line_height(px(16.))
+                    .mt(px(16.)),
+                )
+                .child(
+                    h().gap(px(10.))
+                        .mt(px(24.))
+                        .child(dialog_button(
+                            "confirm-cancel",
+                            "取消 · Esc",
+                            false,
+                            Box::new(move |cx: &mut GpuiApp| {
+                                let _ = cancel.update(cx, |app, cx| app.cancel_signal(cx));
+                            }),
+                        ))
+                        .child(dialog_button(
+                            "confirm-ok",
+                            action.verb(),
+                            danger,
+                            Box::new(move |cx: &mut GpuiApp| {
+                                let _ = confirm.update(cx, |app, cx| app.confirm_signal(cx));
+                            }),
+                        )),
+                )
+                .child(txt("Enter 确认 · Esc 取消", 9.5, FontWeight::NORMAL, dim()).mt(px(14.))),
+        )
+}
+
+fn dialog_button(
+    id: &'static str,
+    label: &'static str,
+    danger: bool,
+    handler: Box<dyn Fn(&mut GpuiApp)>,
+) -> Stateful<Div> {
+    h().id(id)
+        .flex_1()
+        .cursor_pointer()
+        .justify_center()
+        .items_center()
+        .py(px(11.))
+        .bg(if danger { accent() } else { surface_2() })
+        .border(px(1.))
+        .border_color(if danger { accent() } else { line_strong() })
+        .hover(|this| this.border_color(text()))
+        .on_click(move |_, _, cx| {
+            cx.stop_propagation();
+            handler(cx);
+        })
+        .child(caps(
+            label,
+            10.,
+            FontWeight::NORMAL,
+            if danger { text() } else { muted() },
+            0.14,
+        ))
+}
+
+fn context_menu(
+    pid: u32,
+    name: &str,
+    left: f32,
+    top: f32,
+    paused: bool,
+    frozen: Option<u32>,
+    selected: Option<u32>,
+    weak: &WeakEntity<App>,
+) -> Stateful<Div> {
+    let focus = weak.clone();
+    let copy_row = weak.clone();
+    let copy_cmd = weak.clone();
+    let pause = weak.clone();
+    let freeze = weak.clone();
+    let terminate = weak.clone();
+    let kill = weak.clone();
+    let stop = weak.clone();
+    let cont = weak.clone();
+    let close = weak.clone();
+    v().id("proc-menu")
+        .absolute()
+        .left(px(left))
+        .top(px(top))
+        .w(px(224.))
+        .bg(black())
+        .border(px(1.))
+        .border_color(line_strong())
+        .occlude()
+        .p(px(6.))
+        .on_mouse_down_out(move |_, _, cx| {
+            let _ = close.update(cx, |app, cx| app.close_process_menu(cx));
+        })
+        .child(
+            v().px(px(10.))
+                .py(px(8.))
+                .border_b(px(1.))
+                .border_color(line())
+                .mb(px(4.))
+                .child(txt(name.to_string(), 12., FontWeight::NORMAL, text()))
+                .child(txt(format!("PID {pid}"), 9.5, FontWeight::NORMAL, dim()).mt(px(3.))),
+        )
+        .child(menu_item(
+            "menu-focus",
+            "查看详情 / 保持选中",
+            "点击",
+            false,
+            {
+                let weak = focus.clone();
+                Box::new(move |cx: &mut GpuiApp| {
+                    let _ = weak.update(cx, |app, cx| app.focus_process_detail(pid, cx));
+                })
+            },
+        ))
+        .child(menu_item(
+            "menu-copy-row",
+            "复制进程行",
+            "Ctrl+C",
+            false,
+            {
+                Box::new(move |cx: &mut GpuiApp| {
+                    let _ = copy_row.update(cx, |app, cx| app.copy_process_row(pid, cx));
+                })
+            },
+        ))
+        .child(menu_item(
+            "menu-copy-cmd",
+            "复制命令行",
+            "Ctrl+Shift+C",
+            false,
+            {
+                Box::new(move |cx: &mut GpuiApp| {
+                    let _ = copy_cmd.update(cx, |app, cx| app.copy_process_command(pid, cx));
+                })
+            },
+        ))
+        .child(menu_separator())
+        .child(menu_item(
+            "menu-pause",
+            if paused {
+                "继续刷新列表"
+            } else {
+                "暂停刷新列表"
+            },
+            "Ctrl+Space",
+            false,
+            {
+                Box::new(move |cx: &mut GpuiApp| {
+                    let _ = pause.update(cx, |app, cx| app.toggle_table_pause(cx));
+                })
+            },
+        ))
+        .child(menu_item(
+            "menu-freeze",
+            if frozen.is_some() {
+                "取消排序冻结"
+            } else {
+                "排序冻结此行"
+            },
+            "Ctrl+F",
+            false,
+            {
+                Box::new(move |cx: &mut GpuiApp| {
+                    let _ = freeze.update(cx, |app, cx| {
+                        if selected == Some(pid) || frozen.is_some() {
+                            app.toggle_table_freeze(cx)
+                        } else {
+                            app.focus_process_detail(pid, cx);
+                            app.toggle_table_freeze(cx)
+                        }
+                    });
+                })
+            },
+        ))
+        .child(menu_separator())
+        .child(menu_item(
+            "menu-stop",
+            "暂停进程 · SIGSTOP",
+            "Ctrl+P",
+            false,
+            {
+                Box::new(move |cx: &mut GpuiApp| {
+                    let _ =
+                        stop.update(cx, |app, cx| app.request_signal(pid, ProcAction::Stop, cx));
+                })
+            },
+        ))
+        .child(menu_item(
+            "menu-cont",
+            "继续进程 · SIGCONT",
+            "Ctrl+Shift+P",
+            false,
+            {
+                Box::new(move |cx: &mut GpuiApp| {
+                    let _ = cont.update(cx, |app, cx| {
+                        app.request_signal(pid, ProcAction::Continue, cx)
+                    });
+                })
+            },
+        ))
+        .child(menu_separator())
+        .child(menu_item(
+            "menu-term",
+            "结束 · SIGTERM",
+            "Ctrl+K",
+            true,
+            {
+                Box::new(move |cx: &mut GpuiApp| {
+                    let _ = terminate.update(cx, |app, cx| {
+                        app.request_signal(pid, ProcAction::Terminate, cx)
+                    });
+                })
+            },
+        ))
+        .child(menu_item(
+            "menu-kill",
+            "强制结束 · SIGKILL",
+            "Ctrl+Shift+K",
+            true,
+            {
+                Box::new(move |cx: &mut GpuiApp| {
+                    let _ =
+                        kill.update(cx, |app, cx| app.request_signal(pid, ProcAction::Kill, cx));
+                })
+            },
+        ))
+}
+
+fn menu_item(
+    id: &'static str,
+    label: &'static str,
+    shortcut: &'static str,
+    danger: bool,
+    handler: Box<dyn Fn(&mut GpuiApp)>,
+) -> Stateful<Div> {
+    h().id(id)
+        .cursor_pointer()
+        .px(px(10.))
+        .py(px(7.))
+        .justify_between()
+        .items_center()
+        .hover(|this| this.bg(alpha(0xffffff0e)))
+        .on_click(move |_, _, cx| {
+            cx.stop_propagation();
+            handler(cx);
+        })
+        .child(txt(
+            label,
+            10.5,
+            FontWeight::NORMAL,
+            if danger { warn() } else { text() },
+        ))
+        .child(txt(shortcut, 8.5, FontWeight::NORMAL, dim()))
+}
+
+fn menu_separator() -> Div {
+    div().h(px(1.)).my(px(5.)).bg(line())
+}
+
 fn detail_panel(
-    overview: &Overview,
+    _overview: &Overview,
     process: Option<&Process>,
     weak: &WeakEntity<App>,
     title: &str,
+    rich: bool,
 ) -> Div {
     let Some(process) = process else {
         return v().w(px(300.)).bg(black()).p(px(24.));
     };
     let pid = process.pid;
-    let armed = overview.proc_kill_armed == Some(pid);
-    let kill_weak = weak.clone();
-    let force_weak = weak.clone();
-    v().w(px(300.))
+    let terminate = weak.clone();
+    let kill = weak.clone();
+    let stop = weak.clone();
+    let cont = weak.clone();
+    let copy_row = weak.clone();
+    let copy_cmd = weak.clone();
+    let focus = weak.clone();
+    let command = {
+        let cmd = proc::command(pid);
+        if cmd.is_empty() {
+            "—（内核线程）".to_string()
+        } else {
+            cmd
+        }
+    };
+    let mut panel = v()
+        .w(px(300.))
         .flex_shrink_0()
         .bg(black())
         .p(px(24.))
@@ -966,67 +1381,127 @@ fn detail_panel(
             v().mt(px(16.))
                 .child(caps("命令行", 9.5, FontWeight::NORMAL, dim(), 0.2))
                 .child(
-                    txt(
-                        {
-                            let cmd = proc::command(pid);
-                            if cmd.is_empty() {
-                                "—（内核线程）".to_string()
-                            } else {
-                                cmd
-                            }
-                        },
-                        10.5,
-                        FontWeight::NORMAL,
-                        muted(),
-                    )
-                    .line_height(px(15.))
-                    .mt(px(6.)),
+                    txt(command, 10.5, FontWeight::NORMAL, muted())
+                        .line_height(px(15.))
+                        .mt(px(6.)),
                 ),
         )
         .child(
             h().gap(px(8.))
                 .mt(px(20.))
-                .child(
-                    div()
-                        .id(("detail-kill", pid as usize))
-                        .flex_1()
-                        .cursor_pointer()
-                        .justify_center()
-                        .py(px(10.))
-                        .border(px(1.))
-                        .border_color(if armed { accent() } else { line_strong() })
-                        .bg(if armed { accent() } else { alpha(0x00000000) })
-                        .on_click(move |_, _, cx| {
-                            let _ = kill_weak.update(cx, |app, cx| app.arm_kill(pid, false, cx));
-                        })
-                        .child(caps(
-                            if armed {
-                                "再点一次确认"
-                            } else {
-                                "结束进程"
-                            },
-                            9.5,
-                            FontWeight::NORMAL,
-                            if armed { text() } else { muted() },
-                            0.14,
-                        )),
-                )
-                .child(
-                    div()
-                        .id(("detail-force", pid as usize))
-                        .cursor_pointer()
-                        .justify_center()
-                        .px(px(12.))
-                        .py(px(10.))
-                        .border(px(1.))
-                        .border_color(line_strong())
-                        .hover(|this| this.border_color(accent()).text_color(accent()))
-                        .on_click(move |_, _, cx| {
-                            let _ = force_weak.update(cx, |app, cx| app.arm_kill(pid, true, cx));
-                        })
-                        .child(caps("强杀", 9.5, FontWeight::NORMAL, dim(), 0.14)),
-                ),
-        )
+                .child(detail_button(
+                    ("detail-kill", pid as usize),
+                    "结束",
+                    true,
+                    Box::new(move |cx: &mut GpuiApp| {
+                        let _ = terminate.update(cx, |app, cx| {
+                            app.request_signal(pid, ProcAction::Terminate, cx)
+                        });
+                    }),
+                ))
+                .child(detail_button(
+                    ("detail-force", pid as usize),
+                    "强杀",
+                    true,
+                    Box::new(move |cx: &mut GpuiApp| {
+                        let _ = kill
+                            .update(cx, |app, cx| app.request_signal(pid, ProcAction::Kill, cx));
+                    }),
+                )),
+        );
+
+    if rich {
+        panel = panel
+            .child(
+                h().gap(px(8.))
+                    .mt(px(8.))
+                    .child(detail_button(
+                        ("detail-stop", pid as usize),
+                        "暂停",
+                        false,
+                        Box::new(move |cx: &mut GpuiApp| {
+                            let _ = stop.update(cx, |app, cx| {
+                                app.request_signal(pid, ProcAction::Stop, cx)
+                            });
+                        }),
+                    ))
+                    .child(detail_button(
+                        ("detail-cont", pid as usize),
+                        "继续",
+                        false,
+                        Box::new(move |cx: &mut GpuiApp| {
+                            let _ = cont.update(cx, |app, cx| {
+                                app.request_signal(pid, ProcAction::Continue, cx)
+                            });
+                        }),
+                    )),
+            )
+            .child(
+                h().gap(px(8.))
+                    .mt(px(8.))
+                    .child(detail_button(
+                        ("detail-copy-row", pid as usize),
+                        "复制行",
+                        false,
+                        Box::new(move |cx: &mut GpuiApp| {
+                            let _ = copy_row.update(cx, |app, cx| app.copy_process_row(pid, cx));
+                        }),
+                    ))
+                    .child(detail_button(
+                        ("detail-copy-cmd", pid as usize),
+                        "复制命令行",
+                        false,
+                        Box::new(move |cx: &mut GpuiApp| {
+                            let _ =
+                                copy_cmd.update(cx, |app, cx| app.copy_process_command(pid, cx));
+                        }),
+                    )),
+            )
+            .child(
+                div()
+                    .id(("detail-focus", pid as usize))
+                    .mt(px(14.))
+                    .cursor_pointer()
+                    .py(px(8.))
+                    .border_t(px(1.))
+                    .border_color(line())
+                    .on_click(move |_, _, cx| {
+                        let _ = focus.update(cx, |app, cx| app.focus_process_detail(pid, cx));
+                    })
+                    .child(txt(
+                        "右键菜单里有更多操作 · 点击保持选中",
+                        9.5,
+                        FontWeight::NORMAL,
+                        dim(),
+                    )),
+            );
+    }
+    panel
+}
+
+fn detail_button(
+    id: (&'static str, usize),
+    label: &'static str,
+    danger: bool,
+    handler: Box<dyn Fn(&mut GpuiApp)>,
+) -> Stateful<Div> {
+    h().id(id)
+        .flex_1()
+        .cursor_pointer()
+        .justify_center()
+        .items_center()
+        .py(px(9.))
+        .border(px(1.))
+        .border_color(if danger { line_strong() } else { line() })
+        .hover(|this| this.border_color(accent()).text_color(accent()))
+        .on_click(move |_, _, cx| handler(cx))
+        .child(caps(
+            label,
+            9.5,
+            FontWeight::NORMAL,
+            if danger { muted() } else { dim() },
+            0.14,
+        ))
 }
 
 // ============================================================================
