@@ -5,6 +5,7 @@ mod pages;
 mod proc;
 mod registry;
 mod root_align;
+mod scroll;
 mod sys;
 mod table_state;
 mod theme;
@@ -17,10 +18,11 @@ use root_align::Action as RootAlignAction;
 use ext::Provider as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AppContext as _, Bounds, Context, Div, FontWeight, Hsla, InteractiveElement as _, IntoElement,
-    MouseButton, ParentElement as _, PathBuilder, Point, Render, ResizeEdge, Stateful,
-    StatefulInteractiveElement as _, Styled, TitlebarOptions, WeakEntity, Window, WindowBounds,
-    WindowDecorations, WindowOptions, canvas, div, point, px, relative, rgba, size,
+    AppContext as _, Bounds, ClipboardItem, Context, CursorStyle, Div, DragMoveEvent, FontWeight,
+    Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement as _,
+    PathBuilder, Pixels, Point, Render, ResizeEdge, Stateful, StatefulInteractiveElement as _,
+    Styled, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowDecorations, WindowOptions,
+    canvas, div, point, px, relative, rgba, size,
 };
 use theme::{
     FONT, accent, accent_hover, alpha, black, caps, dim, h, line, line_faint, line_strong, muted,
@@ -35,6 +37,90 @@ use theme::{
 const DOUBLE_CLICK: Duration = Duration::from_millis(320);
 const DRAG_THRESHOLD: f32 = 4.;
 
+/// A signal the user is about to send to a process. Signal names stay here so
+/// the dialog and the keyboard shortcuts cannot disagree about what is armed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProcAction {
+    Terminate,
+    Kill,
+    Stop,
+    Continue,
+}
+
+impl ProcAction {
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            ProcAction::Terminate => "结束进程",
+            ProcAction::Kill => "强制结束进程",
+            ProcAction::Stop => "暂停进程",
+            ProcAction::Continue => "继续进程",
+        }
+    }
+
+    pub(crate) fn verb(self) -> &'static str {
+        match self {
+            ProcAction::Terminate => "确认结束",
+            ProcAction::Kill => "确认强杀",
+            ProcAction::Stop => "确认暂停",
+            ProcAction::Continue => "确认继续",
+        }
+    }
+
+    pub(crate) fn warning(self) -> &'static str {
+        match self {
+            ProcAction::Terminate => "将发送 SIGTERM：进程有机会清理后退出，但也可能忽略这个信号。",
+            ProcAction::Kill => "将发送 SIGKILL：进程立即终止，未保存的数据会丢失，且无法拦截。",
+            ProcAction::Stop => "将发送 SIGSTOP：进程暂停执行，直到收到 SIGCONT 才恢复。",
+            ProcAction::Continue => "将发送 SIGCONT：恢复被 SIGSTOP 暂停的进程。",
+        }
+    }
+
+    pub(crate) fn signal(self) -> i32 {
+        match self {
+            ProcAction::Terminate => libc::SIGTERM,
+            ProcAction::Kill => libc::SIGKILL,
+            ProcAction::Stop => libc::SIGSTOP,
+            ProcAction::Continue => libc::SIGCONT,
+        }
+    }
+
+    pub(crate) fn signal_label(self) -> &'static str {
+        match self {
+            ProcAction::Terminate => "SIGTERM",
+            ProcAction::Kill => "SIGKILL",
+            ProcAction::Stop => "SIGSTOP",
+            ProcAction::Continue => "SIGCONT",
+        }
+    }
+
+    pub(crate) fn danger(self) -> bool {
+        matches!(self, ProcAction::Kill | ProcAction::Terminate)
+    }
+}
+
+/// Everything the confirmation dialog needs, captured when the action is
+/// requested (the snapshot may have changed by the time the user confirms).
+#[derive(Clone, Debug)]
+pub(crate) struct ProcDialog {
+    pub(crate) pid: u32,
+    pub(crate) action: ProcAction,
+    pub(crate) name: String,
+    pub(crate) command: String,
+}
+
+/// Owned snapshot of transient process-view UI passed to the plugin renderer.
+/// Owned (not borrowed) so overlay callbacks never capture `render`'s stack.
+pub(crate) struct ProcOverlays {
+    pub(crate) dialog: Option<ProcDialog>,
+    pub(crate) menu: Option<(u32, f32, f32)>,
+    pub(crate) toast: Option<String>,
+    pub(crate) selected: Option<u32>,
+    pub(crate) paused: bool,
+    pub(crate) frozen: Option<u32>,
+    pub(crate) viewport: (f32, f32),
+    pub(crate) menu_name: String,
+}
+
 pub(crate) struct App {
     probe: sys::Probe,
     snap: sys::Snapshot,
@@ -47,9 +133,19 @@ pub(crate) struct App {
     /// Total CPU% of the last 30 samples, for the live view.
     cpu_history: Vec<f32>,
     proc_selected: Option<u32>,
-    /// First click arms "结束", second click sends SIGTERM.
-    proc_kill_armed: Option<u32>,
+    /// Pending signal awaiting the confirmation dialog.
+    proc_dialog: Option<ProcDialog>,
+    /// Right-click popup on a table row: (pid, window x, window y).
+    proc_menu: Option<(u32, f32, f32)>,
+    /// Short-lived status message (copy feedback, signal result, ...).
+    proc_toast: Option<String>,
+    proc_toast_at: Option<Instant>,
     pub(crate) table: table_state::TableState,
+    /// Scroll state for the shared page scroller and for the table body. The
+    /// tick column and the keyboard both drive these, so a broken wheel is
+    /// never a dead end.
+    pub(crate) content_led: scroll::Led,
+    pub(crate) table_led: scroll::Led,
     /// uid 0 = root; "我的" 过滤以此为基准.
     my_uid: u32,
     /// One state entry per `fixes::FIXES` row, in the same order.
@@ -99,6 +195,13 @@ impl App {
                 let alive = this
                     .update(cx, |app, cx| {
                         app.snap = app.probe.sample();
+                        if app
+                            .proc_toast_at
+                            .is_some_and(|at| at.elapsed() > Duration::from_millis(2400))
+                        {
+                            app.proc_toast = None;
+                            app.proc_toast_at = None;
+                        }
                         if app.nav.page.plugin == "processes" && !app.table.paused {
                             app.proc = app.proc_sampler.sample();
                             app.cpu_history.push(app.proc.cpu_total);
@@ -130,8 +233,13 @@ impl App {
             proc,
             cpu_history: Vec::new(),
             proc_selected: None,
-            proc_kill_armed: None,
+            proc_dialog: None,
+            proc_menu: None,
+            proc_toast: None,
+            proc_toast_at: None,
             table: table_state::TableState::default(),
+            content_led: scroll::Led::new(),
+            table_led: scroll::Led::new(),
             my_uid: unsafe { libc::geteuid() },
             fixes: fixes::FIXES
                 .iter()
@@ -173,6 +281,7 @@ impl App {
         self.error = None;
         self.fixes_apply_armed = false;
         self.root_align.armed = None;
+        self.close_process_overlays();
         cx.notify();
     }
 
@@ -182,6 +291,7 @@ impl App {
         self.error = None;
         self.fixes_apply_armed = false;
         self.root_align.armed = None;
+        self.close_process_overlays();
         if page.plugin == "processes" {
             self.proc = self.proc_sampler.sample();
             self.cpu_history.push(self.proc.cpu_total);
@@ -333,58 +443,201 @@ impl App {
         cx.notify();
     }
 
-    /// Two-step terminate. `force` selects SIGKILL instead of SIGTERM.
-    pub(crate) fn kill_process(&mut self, pid: u32, force: bool, cx: &mut Context<Self>) {
-        let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
-        self.error = proc::signal(pid, signal).err();
+    /// Send a signal and immediately re-sample, so the UI shows the result.
+    /// The caller decides how to surface a failure (toast, not the extension
+    /// detail panel's `error` field).
+    pub(crate) fn signal_process(
+        &mut self,
+        pid: u32,
+        sig: i32,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let result = proc::signal(pid, sig);
         self.proc = self.proc_sampler.sample();
+        cx.notify();
+        result
+    }
+
+    /// Ask the user to confirm a signal before sending it.
+    pub(crate) fn request_signal(&mut self, pid: u32, action: ProcAction, cx: &mut Context<Self>) {
+        self.proc_selected = Some(pid);
+        self.proc_menu = None;
+        self.proc_dialog = Some(ProcDialog {
+            pid,
+            action,
+            name: self.process_name(pid),
+            command: proc::command(pid),
+        });
         cx.notify();
     }
 
-    /// Two-step terminate: the first call arms the process, the second kills it.
-    pub(crate) fn arm_kill(&mut self, pid: u32, force: bool, cx: &mut Context<Self>) {
-        if self.proc_kill_armed == Some(pid) {
-            self.proc_kill_armed = None;
-            self.kill_process(pid, force, cx);
-        } else {
-            self.proc_kill_armed = Some(pid);
-            self.error = None;
-            cx.notify();
-        }
+    /// Confirm the open dialog (only the explicit button calls this).
+    pub(crate) fn confirm_signal(&mut self, cx: &mut Context<Self>) {
+        let Some(dialog) = self.proc_dialog.take() else {
+            return;
+        };
+        self.proc_toast = Some(
+            match self.signal_process(dialog.pid, dialog.action.signal(), cx) {
+                Ok(()) => format!(
+                    "已向 PID {} 发送 {}",
+                    dialog.pid,
+                    dialog.action.signal_label()
+                ),
+                Err(error) => format!("发送失败：{error}"),
+            },
+        );
+        self.proc_toast_at = Some(Instant::now());
+        cx.notify();
     }
 
-    /// Handle a keystroke while the Table view is visible.
+    pub(crate) fn cancel_signal(&mut self, cx: &mut Context<Self>) {
+        self.proc_dialog = None;
+        cx.notify();
+    }
+
+    /// Open / close the row context menu. Position is window-local pixels.
+    pub(crate) fn toggle_process_menu(&mut self, pid: u32, x: f32, y: f32, cx: &mut Context<Self>) {
+        self.proc_selected = Some(pid);
+        self.proc_dialog = None;
+        self.proc_menu = Some((pid, x, y));
+        cx.notify();
+    }
+
+    pub(crate) fn close_process_menu(&mut self, cx: &mut Context<Self>) {
+        self.proc_menu = None;
+        cx.notify();
+    }
+
+    fn close_process_overlays(&mut self) {
+        self.proc_dialog = None;
+        self.proc_menu = None;
+        self.proc_toast = None;
+        self.proc_toast_at = None;
+    }
+
+    pub(crate) fn process_name(&self, pid: u32) -> String {
+        self.proc
+            .processes
+            .iter()
+            .find(|p| p.pid == pid)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| format!("PID {pid}"))
+    }
+
+    /// Keep the selection and close the menu, so the detail panel stays open.
+    pub(crate) fn focus_process_detail(&mut self, pid: u32, cx: &mut Context<Self>) {
+        self.proc_selected = Some(pid);
+        self.proc_menu = None;
+        cx.notify();
+    }
+
+    /// Copy text to both the clipboard and the X11 primary selection, so a
+    /// paste works with Ctrl+V and middle-click alike.
+    pub(crate) fn copy_text(&mut self, text: String, label: &str, cx: &mut Context<Self>) {
+        let item = ClipboardItem::new_string(text);
+        cx.write_to_clipboard(item.clone());
+        cx.write_to_primary(item);
+        self.proc_toast = Some(format!("已复制{label}"));
+        self.proc_toast_at = Some(Instant::now());
+        self.proc_menu = None;
+        cx.notify();
+    }
+
+    /// Build a TSV row matching the table columns.
+    pub(crate) fn copy_process_row(&mut self, pid: u32, cx: &mut Context<Self>) {
+        let Some(process) = self.proc.processes.iter().find(|p| p.pid == pid) else {
+            return;
+        };
+        let text = format!(
+            "{}\t{}\t{}\t{}\t{:.1}%\t{}\t{}\t{}",
+            process.name,
+            process.pid,
+            process.user,
+            process.state.label(),
+            process.cpu,
+            process.mem_label(),
+            process.threads,
+            process.age_label(),
+        );
+        self.copy_text(text, "进程行", cx);
+    }
+
+    pub(crate) fn copy_process_command(&mut self, pid: u32, cx: &mut Context<Self>) {
+        let cmd = proc::command(pid);
+        let text = if cmd.is_empty() {
+            format!("PID {pid}")
+        } else {
+            cmd
+        };
+        self.copy_text(text, "命令行", cx);
+    }
+
+    /// Handle a keystroke while the Table view is visible. Plain characters
+    /// are search input; all actions use Ctrl so typing "pipewire" can never
+    /// accidentally arm SIGSTOP ("p") or copy ("c").
     pub(crate) fn table_key(&mut self, key: &str, cx: &mut Context<Self>) {
+        if self.proc_dialog.is_some() {
+            match key {
+                "enter" => self.confirm_signal(cx),
+                "escape" => self.cancel_signal(cx),
+                _ => {}
+            }
+            return;
+        }
+        // A menu is mouse-driven; any keystroke dismisses it so its labels
+        // never go stale after a keyboard-driven state change.
+        self.proc_menu = None;
         match key {
             "backspace" => self.table.backspace(),
             "escape" => {
                 self.table.clear_query();
                 self.proc_selected = None;
-                self.proc_kill_armed = None;
             }
-            "space" => self.table.paused = !self.table.paused,
-            "F" => {
+            "ctrl-space" => self.table.paused = !self.table.paused,
+            "ctrl-f" | "ctrl-F" => {
                 self.table.frozen_pid = if self.table.frozen_pid.is_some() {
                     None
                 } else {
                     self.proc_selected
                 }
             }
-            "f" => self.table.frozen_pid = None,
-            "k" => {
+            "ctrl-k" => {
                 if let Some(pid) = self.proc_selected {
-                    self.arm_kill(pid, false, cx);
+                    self.request_signal(pid, ProcAction::Terminate, cx);
                 }
             }
-            "K" => {
+            "ctrl-K" => {
                 if let Some(pid) = self.proc_selected {
-                    self.arm_kill(pid, true, cx);
+                    self.request_signal(pid, ProcAction::Kill, cx);
                 }
             }
-            "1" => self.table.scope = table_state::Scope::All,
-            "2" => self.table.scope = table_state::Scope::Mine,
-            "3" => self.table.scope = table_state::Scope::System,
-            ch if ch.len() == 1 && !ch.chars().next().unwrap().is_control() => {
+            "ctrl-p" => {
+                if let Some(pid) = self.proc_selected {
+                    self.request_signal(pid, ProcAction::Stop, cx);
+                }
+            }
+            "ctrl-P" => {
+                if let Some(pid) = self.proc_selected {
+                    self.request_signal(pid, ProcAction::Continue, cx);
+                }
+            }
+            "ctrl-c" => {
+                if let Some(pid) = self.proc_selected {
+                    self.copy_process_row(pid, cx);
+                }
+            }
+            "ctrl-C" => {
+                if let Some(pid) = self.proc_selected {
+                    self.copy_process_command(pid, cx);
+                }
+            }
+            "ctrl-1" => self.table.scope = table_state::Scope::All,
+            "ctrl-2" => self.table.scope = table_state::Scope::Mine,
+            "ctrl-3" => self.table.scope = table_state::Scope::System,
+            ch if !ch.starts_with("ctrl-")
+                && ch.len() == 1
+                && !ch.chars().next().unwrap().is_control() =>
+            {
                 for c in ch.chars() {
                     self.table.set_query_char(c);
                 }
@@ -467,14 +720,74 @@ impl App {
 }
 
 impl Render for App {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let weak = cx.entity().downgrade();
+        let key_weak = cx.entity().downgrade();
+        let table_view = self.nav.page.plugin == "processes" && self.nav.page.view == "table";
+        let viewport = window.viewport_size();
+        let viewport = (viewport.width.as_f32(), viewport.height.as_f32());
+        let dialog = self.proc_dialog.clone();
+        let menu = self.proc_menu;
+        let menu_name = menu
+            .map(|(pid, _, _)| self.process_name(pid))
+            .unwrap_or_default();
+        let toast = self.proc_toast.clone();
+        let proc_selected = self.proc_selected;
+        let paused = self.table.paused;
+        let frozen = self.table.frozen_pid;
+
         h().relative()
             .size_full()
             .items_stretch()
             .bg(black())
             .font_family(FONT)
             .text_color(text())
+            // Keyboard events follow the focus-to-root dispatch path. With no
+            // focusable element the path is just the root, so a child listener
+            // never sees them: the window root owns every shortcut.
+            .on_key_down(move |event: &KeyDownEvent, _, cx| {
+                let stroke = &event.keystroke;
+                if stroke.modifiers.alt || stroke.modifiers.platform {
+                    return;
+                }
+                let key = stroke.key.as_str();
+                // Normalise shortcuts once, here. Plain characters belong to
+                // the search field; every state-changing shortcut needs Ctrl.
+                // On Linux Shift+K arrives as key "k" with an upper-case
+                // key_char, and Ctrl+K has no key_char at all.
+                let normalized = if key.len() == 1 && key.chars().all(|c| c.is_ascii_alphabetic()) {
+                    let ch = key.chars().next().unwrap();
+                    let ch = if stroke.modifiers.shift {
+                        ch.to_ascii_uppercase()
+                    } else {
+                        stroke
+                            .key_char
+                            .as_deref()
+                            .filter(|c| c.chars().count() == 1 && !c.chars().any(char::is_control))
+                            .and_then(|c| c.chars().next())
+                            .unwrap_or(ch)
+                    };
+                    if stroke.modifiers.control {
+                        format!("ctrl-{ch}")
+                    } else {
+                        ch.to_string()
+                    }
+                } else if stroke.modifiers.control {
+                    match key {
+                        "space" => "ctrl-space".to_string(),
+                        "1" | "2" | "3" => format!("ctrl-{key}"),
+                        _ => return,
+                    }
+                } else {
+                    stroke
+                        .key_char
+                        .as_deref()
+                        .filter(|c| c.chars().count() == 1 && !c.chars().any(char::is_control))
+                        .map(str::to_string)
+                        .unwrap_or_else(|| key.to_string())
+                };
+                let _ = key_weak.update(cx, |app, cx| app.key_down(&normalized, cx));
+            })
             .child(rail(self.nav.section, &weak))
             .child(
                 v().flex_1()
@@ -491,19 +804,35 @@ impl Render for App {
                             page: self.nav.page,
                             proc: &self.proc,
                             cpu_history: &self.cpu_history,
-                            proc_selected: self.proc_selected,
-                            proc_kill_armed: self.proc_kill_armed,
+                            proc_selected,
                             table: &self.table,
                             my_uid: self.my_uid,
                             fixes: &self.fixes,
                             fixes_checked: &self.fixes_checked,
                             fixes_apply_armed: self.fixes_apply_armed,
                             root_align: &self.root_align,
+                            content_led: &self.content_led,
+                            table_led: &self.table_led,
                         },
                         cx,
                     )),
             )
             .child(resize_grips())
+            .when(table_view, |this| {
+                this.child(pages::processes::overlays(
+                    ProcOverlays {
+                        dialog,
+                        menu,
+                        toast,
+                        selected: proc_selected,
+                        paused,
+                        frozen,
+                        viewport,
+                        menu_name,
+                    },
+                    &weak,
+                ))
+            })
     }
 }
 
@@ -889,7 +1218,6 @@ pub(crate) struct Overview<'a> {
     pub(crate) proc: &'a proc::Snapshot,
     pub(crate) cpu_history: &'a [f32],
     pub(crate) proc_selected: Option<u32>,
-    pub(crate) proc_kill_armed: Option<u32>,
     pub(crate) table: &'a table_state::TableState,
     pub(crate) my_uid: u32,
     /// Per-row state of the gnome-fixes extension.
@@ -898,11 +1226,12 @@ pub(crate) struct Overview<'a> {
     pub(crate) fixes_apply_armed: bool,
     /// Verbatim stdout and parsed state of the root-align console.
     pub(crate) root_align: &'a root_align::State,
+    pub(crate) content_led: &'a scroll::Led,
+    pub(crate) table_led: &'a scroll::Led,
 }
 
 fn content(overview: &Overview, cx: &mut Context<App>) -> impl IntoElement {
     let weak = cx.entity().downgrade();
-    let key_weak = cx.entity().downgrade();
     let table_view = overview.page.plugin == "processes" && overview.page.view == "table";
     let body = match (overview.page.plugin, overview.page.view) {
         ("core", "overview") => overview_body(overview, &weak),
@@ -912,26 +1241,149 @@ fn content(overview: &Overview, cx: &mut Context<App>) -> impl IntoElement {
         ("root-align", _) => pages::root_align::body(overview, &weak),
         (_, label) => placeholder(label),
     };
-    // Table owns its own scrollbar below the header; every other page keeps
-    // the shared outer scroller.
-    let outer = v()
-        .id("content")
+    // The table owns its scroller below the header; every other page keeps the
+    // shared outer one. Both track an `Led`, so the tick column and the
+    // keyboard always drive whatever page is on screen.
+    v().relative()
         .flex_1()
         .min_h_0()
-        .pl(px(40.))
-        .pr(px(52.))
-        .pt(if table_view { px(30.) } else { px(52.) })
-        .pb(if table_view { px(30.) } else { px(64.) })
-        .when(!table_view, |this| this.overflow_y_scroll())
-        .child(body);
-    outer.when(table_view, |this| {
-        this.child(div().id("table-keys").on_key_down(
-            move |event: &gpui_kit::KeyDownEvent, _, cx| {
-                let key = event.keystroke.key.as_str();
-                let _ = key_weak.update(cx, |app, cx| app.table_key(key, cx));
-            },
-        ))
-    })
+        .child(
+            v().id("content")
+                .flex_1()
+                .min_h_0()
+                .pl(px(40.))
+                .pr(px(52.))
+                .pt(if table_view { px(30.) } else { px(52.) })
+                .pb(if table_view { px(30.) } else { px(64.) })
+                .when(!table_view, |this| {
+                    this.overflow_y_scroll()
+                        .track_scroll(overview.content_led.handle())
+                })
+                .child(body),
+        )
+        .when(!table_view, |this| {
+            this.child(led_column("led-content", overview.content_led, 16., &weak))
+        })
+}
+
+// ============================================================================
+// LED scroll indicator
+// ============================================================================
+
+/// Width of the tick column's hit area. The bars are 14px; the rest is margin
+/// so a 14px-wide strip is still comfortable to grab.
+const LED_WIDTH: f32 = 20.;
+
+/// The tick column for one scroll area.
+///
+/// `right` is the distance from the container's right edge. The column's
+/// vertical extent must match the tracked scroll area (that is what makes the
+/// pointer→progress mapping exact), so callers place it in a `relative()`
+/// wrapper whose other child is exactly that scroller.
+fn led_column(
+    id: &'static str,
+    led: &scroll::Led,
+    right: f32,
+    weak: &WeakEntity<App>,
+) -> Stateful<Div> {
+    let jump_weak = weak.clone();
+    let drag_weak = weak.clone();
+    let mut column = div()
+        .id(id)
+        .absolute()
+        .top(px(0.))
+        .bottom(px(0.))
+        .right(px(right))
+        .w(px(LED_WIDTH))
+        .cursor(CursorStyle::ResizeUpDown)
+        .hover(|this| this.bg(alpha(0xffffff08)))
+        .on_mouse_down(MouseButton::Left, move |event, _, cx| {
+            let _ = jump_weak.update(cx, |app, cx| app.scrub_to(event.position.y, cx));
+        })
+        .on_drag(scroll::DragLed, |_, _, _, cx| {
+            cx.stop_propagation();
+            cx.new(|_| scroll::DragLed)
+        })
+        .on_drag_move(move |event: &DragMoveEvent<scroll::DragLed>, _, cx| {
+            // `event.bounds` is this column's own hitbox, so the mapping stays
+            // exact even though the pointer is allowed to leave the column.
+            let y = event.event.position.y;
+            let bounds = event.bounds;
+            let _ = drag_weak.update(cx, |app, cx| app.scrub_at(y, bounds, cx));
+        });
+    // Nothing to indicate when the content fits; the app re-renders every
+    // second, so the column appears as soon as layout says it can scroll.
+    if led.is_scrollable() {
+        column = column.child(scroll::ticks(led.progress()).pr(px(5.)));
+    }
+    column
+}
+
+impl App {
+    fn on_table_view(&self) -> bool {
+        self.nav.page.plugin == "processes" && self.nav.page.view == "table"
+    }
+
+    /// The scroll area the indicator and the keyboard act on.
+    fn active_led(&mut self) -> &mut scroll::Led {
+        if self.on_table_view() {
+            &mut self.table_led
+        } else {
+            &mut self.content_led
+        }
+    }
+
+    /// Press on the tick column: jump straight to the pointer.
+    fn scrub_to(&mut self, y: Pixels, cx: &mut Context<Self>) {
+        let led = self.active_led();
+        let bounds = led.handle().bounds();
+        let progress = led.progress_at(y, bounds);
+        led.set_progress(progress);
+        cx.notify();
+    }
+
+    /// Drag on the tick column: same mapping, but against the column's own
+    /// bounds, which stay valid after the pointer leaves the strip.
+    fn scrub_at(&mut self, y: Pixels, bounds: Bounds<Pixels>, cx: &mut Context<Self>) {
+        let led = self.active_led();
+        let progress = led.progress_at(y, bounds);
+        led.set_progress(progress);
+        cx.notify();
+    }
+
+    /// Wheel-free movement. Returns whether `key` was consumed.
+    fn scroll_key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
+        let led = self.active_led();
+        match key {
+            "up" => led.scroll_by(-56.),
+            "down" => led.scroll_by(56.),
+            "pageup" => led.page_by(-1.),
+            "pagedown" => led.page_by(1.),
+            "home" => led.to_edge(false),
+            "end" => led.to_edge(true),
+            _ => return false,
+        }
+        cx.notify();
+        true
+    }
+
+    /// Root shortcut dispatch: navigation keys scroll, the rest only reaches
+    /// the table view. A modal dialog swallows everything except its own keys.
+    fn key_down(&mut self, key: &str, cx: &mut Context<Self>) {
+        if self.proc_dialog.is_some() {
+            self.table_key(key, cx);
+            return;
+        }
+        if matches!(key, "up" | "down" | "pageup" | "pagedown" | "home" | "end")
+            && self.proc_dialog.is_none()
+        {
+            self.scroll_key(key, cx);
+            return;
+        }
+        if self.on_table_view() {
+            self.table_key(key, cx);
+        }
+    }
 }
 
 fn overview_body(overview: &Overview, weak: &WeakEntity<App>) -> Div {
