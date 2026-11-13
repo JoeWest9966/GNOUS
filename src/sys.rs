@@ -41,6 +41,15 @@ pub struct Snapshot {
     pub net_left: String,
     pub net_right: String,
     pub net_fill: f32,
+
+    /// Per-core busy fraction (0.0–1.0), same window as the aggregate CPU.
+    pub cores: Vec<f32>,
+    /// Context switches per second across the sampling window.
+    pub ctxt_rate: f64,
+    /// Interrupts per second across the sampling window.
+    pub intr_rate: f64,
+    /// Processes currently runnable (`procs_running`).
+    pub procs_running: u32,
 }
 
 /// Samples the machine. Cheap to construct once, then [`Probe::sample`] each
@@ -58,6 +67,13 @@ pub struct Probe {
     last_cpu: Option<(u64, u64)>,
     last_net: Option<(u64, u64, Instant)>,
     net_rate: (f64, f64),
+    /// Per-core `(total, idle)` jiffies from the previous sample.
+    last_cores: Vec<(u64, u64)>,
+    /// Previous `ctxt` / `intr` counters plus when they were read.
+    last_stat: Option<(u64, u64, Instant)>,
+    /// Last accepted per-second rates, shown until a new window closes.
+    ctxt_rate: f64,
+    intr_rate: f64,
 }
 
 impl Probe {
@@ -87,6 +103,10 @@ impl Probe {
             last_cpu: cpu_times(),
             last_net: None,
             net_rate: (0., 0.),
+            last_cores: core_times(),
+            last_stat: stat_counters().map(|(ctxt, intr, _)| (ctxt, intr, Instant::now())),
+            ctxt_rate: 0.,
+            intr_rate: 0.,
         };
         // First rates need a sampling window; 120 ms is enough for a readable
         // CPU number and imperceptible at startup.
@@ -112,6 +132,7 @@ impl Probe {
 
         let (down, up) = self.net_rate();
         let temp = self.temperature();
+        let (cores, ctxt_rate, intr_rate, procs_running) = self.live_cpu();
 
         let headline = if disk_fill >= 0.9 {
             "存储空间告急"
@@ -168,6 +189,11 @@ impl Probe {
             net_left: self.net_iface_label(),
             net_right: format!("↓ {down:.1} ↑ {up:.1}"),
             net_fill: (down as f32 / 20.).clamp(0., 1.),
+
+            cores,
+            ctxt_rate,
+            intr_rate,
+            procs_running,
         }
     }
 
@@ -186,6 +212,40 @@ impl Probe {
         }
         let fill = (dt.saturating_sub(di)) as f32 / dt as f32;
         ((fill * 100.).round() as u32, fill)
+    }
+
+    /// Per-core busy fractions plus `ctxt` / `intr` per-second rates.
+    /// All diffs come from real procfs counters; until the first window
+    /// closes the rates are 0 rather than an invented value.
+    fn live_cpu(&mut self) -> (Vec<f32>, f64, f64, u32) {
+        let now = core_times();
+        let mut cores = Vec::with_capacity(now.len());
+        for (index, &(total, idle)) in now.iter().enumerate() {
+            let busy = match self.last_cores.get(index) {
+                Some(&(ptotal, pidle)) if total > ptotal => {
+                    (total - ptotal - (idle - pidle)) as f32 / (total - ptotal) as f32
+                }
+                _ => 0.,
+            };
+            cores.push(busy.clamp(0., 1.));
+        }
+        self.last_cores = now;
+
+        if let Some((ctxt, intr, running)) = stat_counters() {
+            let secs = Instant::now();
+            if let Some((pctxt, pintr, at)) = self.last_stat {
+                let dt = secs.duration_since(at).as_secs_f64();
+                if dt >= 0.05 {
+                    self.ctxt_rate = ctxt.saturating_sub(pctxt) as f64 / dt;
+                    self.intr_rate = intr.saturating_sub(pintr) as f64 / dt;
+                    self.last_stat = Some((ctxt, intr, secs));
+                }
+            } else {
+                self.last_stat = Some((ctxt, intr, secs));
+            }
+            return (cores, self.ctxt_rate, self.intr_rate, running);
+        }
+        (cores, self.ctxt_rate, self.intr_rate, 0)
     }
 
     fn net_rate(&mut self) -> (f64, f64) {
@@ -251,6 +311,49 @@ fn cpu_times() -> Option<(u64, u64)> {
     let total: u64 = fields.iter().sum();
     let idle = fields[3] + fields.get(4).copied().unwrap_or(0);
     Some((total, idle))
+}
+
+/// `(total, idle)` jiffies for every `cpuN` line, in kernel order.
+fn core_times() -> Vec<(u64, u64)> {
+    let Some(stat) = read("/proc/stat") else {
+        return Vec::new();
+    };
+    stat.lines()
+        .skip_while(|line| !line.starts_with("cpu "))
+        .skip(1)
+        .take_while(|line| line.starts_with("cpu"))
+        .filter_map(|line| {
+            let fields: Vec<u64> = line
+                .split_whitespace()
+                .skip(1)
+                .filter_map(|f| f.parse().ok())
+                .collect();
+            if fields.len() < 4 {
+                return None;
+            }
+            let total: u64 = fields.iter().sum();
+            let idle = fields[3] + fields.get(4).copied().unwrap_or(0);
+            Some((total, idle))
+        })
+        .collect()
+}
+
+/// `(ctxt, intr, procs_running)` from `/proc/stat`'s trailing counters.
+fn stat_counters() -> Option<(u64, u64, u32)> {
+    let stat = read("/proc/stat")?;
+    let mut ctxt = None;
+    let mut intr = None;
+    let mut running = 0u32;
+    for line in stat.lines() {
+        if let Some(v) = line.strip_prefix("ctxt ") {
+            ctxt = v.trim().parse().ok();
+        } else if let Some(v) = line.strip_prefix("intr ") {
+            intr = v.split_whitespace().next().and_then(|v| v.parse().ok());
+        } else if let Some(v) = line.strip_prefix("procs_running ") {
+            running = v.trim().parse().unwrap_or(0);
+        }
+    }
+    Some((ctxt?, intr?, running))
 }
 
 fn cpu_mhz() -> Option<f32> {

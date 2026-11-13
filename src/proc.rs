@@ -111,8 +111,8 @@ pub struct Snapshot {
     pub cpu_total: f32,
     pub mem_used_kb: u64,
     pub mem_total_kb: u64,
-    /// `1 分钟` / `5 分钟` load averages.
-    pub load: (f32, f32),
+    /// `1 分钟` / `5 分钟` / `15 分钟` load averages.
+    pub load: (f32, f32, f32),
 }
 
 pub struct Sampler {
@@ -361,18 +361,18 @@ fn memory() -> (u64, u64) {
     (total, total.saturating_sub(available))
 }
 
-fn load_average() -> (f32, f32) {
+fn load_average() -> (f32, f32, f32) {
     std::fs::read_to_string("/proc/loadavg")
         .ok()
         .and_then(|raw| {
             let fields: Vec<f32> = raw
                 .split_whitespace()
-                .take(2)
+                .take(3)
                 .filter_map(|v| v.parse().ok())
                 .collect();
-            (fields.len() == 2).then(|| (fields[0], fields[1]))
+            (fields.len() == 3).then(|| (fields[0], fields[1], fields[2]))
         })
-        .unwrap_or((0., 0.))
+        .unwrap_or((0., 0., 0.))
 }
 
 fn user_name(uid: u32, cache: &mut HashMap<u32, String>) -> String {

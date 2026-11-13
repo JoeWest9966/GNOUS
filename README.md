@@ -31,7 +31,7 @@
   `Nav` 状态，所以永远同步；未实现的页面显示占位而不是假数据。
 
 - 进程页已按 `docs/EXTENSIONS.md` 做成第一个页面级扩展：`extensions/processes/manifest.toml`
-  声明 5 个视图（Table / Live / Memory / Tree / Groups），顶栏 tab 由 registry 生成，五种视图共用
+  声明 5 个视图（Table / CPU / Memory / Tree / Groups），顶栏 tab 由 registry 生成，五种视图共用
   同一份 `/proc` 采样，支持点击选中与进程操作确认。
 - Table 页 P0：表头排序、直接输入搜索（名称 / PID / 用户）、全部/我的/系统范围过滤、
   暂停刷新、排序冻结、选中行详情栏（含长命令行）、表头吸顶（表体独立滚动）。
