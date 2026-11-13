@@ -22,3 +22,7 @@ label = "Boot"
 [[views]]
 id = "journal"
 label = "Journal"
+
+[[views]]
+id = "projects"
+label = "项目"

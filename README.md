@@ -41,10 +41,20 @@
   键盘：`Ctrl+1/2/3` 切范围、`Ctrl+Space` 暂停刷新、`Ctrl+F` 排序冻结、
   `Ctrl+K` / `Ctrl+Shift+K` 结束/强杀、`Ctrl+P` / `Ctrl+Shift+P` 暂停/继续进程、
   `Ctrl+C` / `Ctrl+Shift+C` 复制行/命令行、`Esc` 清空；普通字符始终进入搜索。
+- Table 页 P2（Table 封版）：状态过滤、只看热点（CPU 阈值或常驻内存 ≥ 512 MB）、
+  关注置顶与「只看关注」（按进程名 + 用户 + uid 持久化，避免 PID 复用）、完整键盘操作
+  （`↑/↓/PgUp/PgDn/Home/End` 选行并滚动跟随、`Enter` 结束、`Delete` 强杀）、
+  0.5s / 1s / 2s / 5s 刷新频率、两帧真实采样差分驱动的变化高亮、三种行密度、
+  本地操作日志（信号/关注/刷新/暂停，最多 200 条，可复制 TSV）。
+  新增 `Ctrl+T` 状态、`Ctrl+H` 热点、`Ctrl+W` 关注、`Ctrl+R` 刷新、`Ctrl+G` 密度、
+  `Ctrl+L` 日志；偏好与日志写入 `~/.config/gnous/table.json`（临时文件 + rename 原子写）。
+  Table 的选中、搜索、滚动位置不持久化，信号执行仍一律经过确认对话框。
 - 新增页面级扩展 `startup-layouts`（左列独立分区 Startup）：勾选开机要铺开的桌面页面、给每页
   按比例排列窗口、配置启动时机与失败策略；配置自动写入 `~/.config/gnous/startup.json`。
   「预演一遍」真实解析每个启动命令在 `PATH` 里是否存在；执行器未接入前，「上次启动」与
-  「启动日志」保持空态，不用演示数据充数。
+  「启动日志」保持空态，不用演示数据充数。第四个视图「项目」登记自研启动项目脚本：
+  `~/.config/gnous/projects/<id>/` 下的 `project.toml` + 脚本，磁盘上有什么就列什么，
+  缺清单 / 缺脚本 / 缺可执行位分别标出，勾选开机直接改写项目自己的清单。
 - 滚动指示器选了 `demo/scroll-indicators` 里的 **10 · LED 刻度**：右侧 26 根 2px 刻度，
   滚过的变暗红、当前位置那根拉长成亮红。整列既是指示器也是把手 —— 点哪跳哪、按住可连续拖；
   再加键盘 `↑` `↓` `PgUp` `PgDn` `Home` `End`，所以滚轮坏了也能走完整个页面。
@@ -57,7 +67,7 @@
   `restart-shell` 不进入批量流程。
 - 顶栏同时是客户端标题栏：拖动、双击最大化、右键原生窗口菜单，四边四角提供隐形缩放热区。
 
-当前版本：`0.2.0-preview.3`。Appearance / Devices / Power 分区与启动器仍是静态占位；
+当前版本：`0.2.0-preview.4`。Appearance / Devices / Power 分区与启动器仍是静态占位；
 剩余外部工具默认在 `/home/root/GNOME`，可用 `GNOUS_FIXES_ROOT` 覆盖；内建后端状态在
 `~/.local/state/gnous/fixes/`，可用 `GNOUS_STATE_HOME` 覆盖。发布记录见 `CHANGELOG.md`。
 
@@ -91,7 +101,8 @@ src/
 ├── ext.rs     # 扩展清单：Provider 抽象 + 文件/gsettings 默认后端
 ├── registry.rs # 编译期插件注册表：解析 extensions/*/manifest.toml，生成顶栏页面
 ├── proc.rs    # 进程采样：/proc/<pid>/stat + status，CPU 差分、用户名、cgroup
-├── table_state.rs # Table 视图的排序 / 搜索 / 范围 / 暂停 / 冻结状态
+├── table_state.rs # Table 视图的筛选 / 排序 / 置顶 / 变化检测 / 行密度 / 刷新频率
+├── table_prefs.rs # Table 偏好与操作日志的本地持久化（~/.config/gnous/table.json）
 ├── scroll.rs  # LED 滚动指示器状态（刻度、拖动、键盘跳转）
 ├── fixes.rs   # gnome-fixes 的清单、外部命令解析与体检状态
 ├── fixes_backend/ # clipfix / root-align 共用的内建 Rust 后端、JSON 状态与审计

@@ -1,6 +1,6 @@
 [package]
 name = "gnous"
-version = "0.2.0-preview.3"
+version = "0.2.0-preview.4"
 edition = "2024"
 publish = false
 

@@ -25,6 +25,11 @@ pub const MONITOR: &str =
     icon!(r#"<rect x="2" y="4" width="20" height="13"/><path d="M8 21h8M12 17v4"/>"#);
 pub const POWER: &str = icon!(r#"<path d="M12 2v10"/><path d="M6 6a8 8 0 1 0 12 0"/>"#);
 pub const STARTUP: &str = icon!(r#"<path d="M12 17V4M6 10l6-6 6 6"/><path d="M4 20h16"/>"#);
+/// Sandbox box: a cube with a visible seam, so it reads as a container and
+/// not as another generic square in the rail.
+pub const BOX: &str = icon!(
+    r#"<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M4 7.5l8 4.5 8-4.5"/><path d="M12 12v9"/>"#
+);
 pub const SETTINGS: &str = icon!(
     r#"<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-4l-.3 2.6a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 2.6h4l.3-2.6a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6c.1-.3.1-.7.1-1z"/>"#
 );

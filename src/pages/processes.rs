@@ -6,16 +6,16 @@
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    App as GpuiApp, Div, FontWeight, InteractiveElement as _, IntoElement, MouseButton,
+    App as GpuiApp, Context, Div, FontWeight, InteractiveElement as _, IntoElement, MouseButton,
     ParentElement as _, PathBuilder, Stateful, StatefulInteractiveElement as _, Styled, WeakEntity,
     Window, canvas, div, point, px, relative, rgba,
 };
 
 use crate::proc::{self, Process, Snapshot};
-use crate::table_state::{Scope, SortKey};
+use crate::table_state::{ChangeKind, ROW_LIMIT, Scope, SortKey, StateFilter};
 use crate::theme::{
-    accent, alpha, black, caps, dim, h, line, line_faint, line_strong, muted, ok, surface_2, text,
-    txt, v, warn,
+    accent, accent_hover, alpha, black, caps, dim, h, line, line_faint, line_strong, muted, ok,
+    surface_2, text, txt, v, warn,
 };
 use crate::{App, Overview, ProcAction, ProcOverlays};
 
@@ -44,7 +44,11 @@ fn page_head(overview: &Overview, title: &str, subtitle: String) -> Div {
     v().mb(px(28.))
         .child(
             caps(
-                &format!("Processes · {} · 每秒刷新", overview.snap.hostname),
+                &format!(
+                    "Processes · {} · {} 刷新",
+                    overview.snap.hostname,
+                    overview.table.refresh.label()
+                ),
                 11.,
                 FontWeight::NORMAL,
                 dim(),
@@ -163,7 +167,7 @@ fn table(overview: &Overview, weak: &WeakEntity<App>) -> Div {
     let snap = overview.proc;
     let table = overview.table;
     let rows = table.rows(&snap.processes, overview.my_uid);
-    let visible: Vec<&Process> = rows.into_iter().take(120).collect();
+    let visible: Vec<&Process> = rows.into_iter().take(ROW_LIMIT).collect();
     let selected = overview
         .proc_selected
         .and_then(|pid| snap.processes.iter().find(|p| p.pid == pid));
@@ -177,7 +181,7 @@ fn table(overview: &Overview, weak: &WeakEntity<App>) -> Div {
             overview,
             "进程",
             format!(
-                "{} 个进程 · {} 个线程 · 按 {} {} · 点击行查看详情 · 右键更多操作",
+                "{} 个进程 · {} 个线程 · 按 {} {} · ↑↓ 选行 / Enter 结束 / Ctrl+W 关注 / 右键更多",
                 snap.processes.len(),
                 snap.threads,
                 table.sort.label(),
@@ -198,14 +202,12 @@ fn table(overview: &Overview, weak: &WeakEntity<App>) -> Div {
                         .pr(px(26.))
                         .overflow_y_scroll()
                         .track_scroll(overview.table_led.handle())
-                        .children(visible.iter().enumerate().map(|(index, process)| {
-                            table_row(
-                                index,
-                                process,
-                                overview.proc_selected == Some(process.pid),
-                                weak,
-                            )
-                        }))
+                        .children(
+                            visible
+                                .iter()
+                                .enumerate()
+                                .map(|(index, process)| table_row(index, process, overview, weak)),
+                        )
                         .child(
                             h().justify_between()
                                 .py(px(18.))
@@ -236,7 +238,13 @@ fn table(overview: &Overview, weak: &WeakEntity<App>) -> Div {
                                 )),
                         ),
                 )
-                .child(crate::led_column("led-table", overview.table_led, 4., weak)),
+                .child(crate::led_column(
+                    "led-table",
+                    overview.table_led,
+                    4.,
+                    crate::scroll::Target::Table,
+                    weak,
+                )),
         )
         .when_some(selected, |this, process| {
             this.child(detail_panel(
@@ -254,74 +262,41 @@ fn table(overview: &Overview, weak: &WeakEntity<App>) -> Div {
 fn table_toolbar(overview: &Overview, weak: &WeakEntity<App>, visible: usize) -> Div {
     let table = overview.table;
     let query = if table.query.is_empty() {
-        "输入即可搜索名称 / PID / 用户".to_string()
+        "输入搜索 · ↑↓ 选择 · Ctrl+动作".to_string()
     } else {
         table.query.clone()
     };
-    h().items_center()
-        .gap(px(10.))
-        .mb(px(14.))
-        .child(
-            h().id("search")
-                .items_center()
-                .gap(px(8.))
-                .w(px(280.))
-                .px(px(12.))
-                .py(px(9.))
-                .border(px(1.))
-                .border_color(line_strong())
-                .child(txt(
-                    query,
-                    11.5,
-                    FontWeight::NORMAL,
-                    if table.query.is_empty() {
-                        dim()
-                    } else {
-                        text()
-                    },
-                )),
-        )
-        .child(
-            h().gap(px(1.))
-                .bg(line())
-                .border(px(1.))
-                .border_color(line())
-                .children([Scope::All, Scope::Mine, Scope::System].map(|scope| {
-                    let weak = weak.clone();
-                    div()
-                        .id(("scope", scope as usize))
-                        .cursor_pointer()
-                        .px(px(13.))
-                        .py(px(9.))
-                        .bg(if table.scope == scope {
-                            text()
-                        } else {
-                            black()
-                        })
-                        .text_color(if table.scope == scope {
-                            black()
-                        } else {
-                            muted()
-                        })
-                        .on_click(move |_, _, cx| {
-                            let _ = weak.update(cx, |app, cx| app.set_table_scope(scope, cx));
-                        })
-                        .child(caps(
-                            scope.label(),
-                            10.,
-                            FontWeight::NORMAL,
-                            if table.scope == scope {
-                                black()
-                            } else {
-                                muted()
-                            },
-                            0.14,
-                        ))
-                })),
-        )
+    let mut controls = v().gap(px(9.)).mb(px(14.));
+    let mut top = h().items_center().gap(px(9.)).child(
+        h().id("search")
+            .items_center()
+            .gap(px(8.))
+            .w(px(252.))
+            .px(px(12.))
+            .py(px(8.))
+            .border(px(1.))
+            .border_color(line_strong())
+            .child(txt(
+                query,
+                11.,
+                FontWeight::NORMAL,
+                if table.query.is_empty() {
+                    dim()
+                } else {
+                    text()
+                },
+            )),
+    );
+    for scope in [Scope::All, Scope::Mine, Scope::System] {
+        top = top.child(scope_button(scope, table.scope == scope, weak));
+    }
+    for filter in StateFilter::ALL {
+        top = top.child(state_button(filter, table.state_filter == filter, weak));
+    }
+    top = top
         .child(div().flex_1())
         .child(txt(
-            format!("{} 条结果", visible),
+            format!("{visible} 条"),
             10.5,
             FontWeight::NORMAL,
             dim(),
@@ -331,8 +306,68 @@ fn table_toolbar(overview: &Overview, weak: &WeakEntity<App>, visible: usize) ->
             9.5,
             FontWeight::NORMAL,
             if table.paused { warn() } else { ok() },
+        ));
+    controls = controls.child(top);
+
+    let mut bottom = h()
+        .items_center()
+        .flex_wrap()
+        .gap(px(7.))
+        .child(click_tool(
+            "hot-btn",
+            &format!("只看热点 · CPU ≥ {:.0}%", table.hot_threshold()),
+            table.hot_only,
+            App::toggle_table_hot,
+            weak,
         ))
-        .child(tool_button(
+        .child(click_tool(
+            "hot-threshold",
+            "阈值",
+            false,
+            App::cycle_table_hot,
+            weak,
+        ))
+        .child(click_tool(
+            "watch-only",
+            &format!("只看关注 · {}", table.watch_count()),
+            table.watched_only,
+            App::toggle_table_watched_only,
+            weak,
+        ))
+        .child(click_tool(
+            "refresh-btn",
+            &format!("刷新 · {}", table.refresh.label()),
+            false,
+            App::cycle_table_refresh,
+            weak,
+        ))
+        .child(click_tool(
+            "density-btn",
+            &format!("密度 · {}", table.density.label()),
+            false,
+            App::cycle_table_density,
+            weak,
+        ))
+        .child(click_tool(
+            "highlight-btn",
+            if table.highlights_on {
+                "变化高亮 · 开"
+            } else {
+                "变化高亮 · 关"
+            },
+            table.highlights_on,
+            App::toggle_table_highlights,
+            weak,
+        ))
+        .child(click_tool(
+            "log-btn",
+            "操作日志 · Ctrl+L",
+            false,
+            App::toggle_proc_log,
+            weak,
+        ))
+        .child(div().flex_1())
+        .child(click_tool(
             "pause-btn",
             if table.paused {
                 "继续刷新"
@@ -340,14 +375,10 @@ fn table_toolbar(overview: &Overview, weak: &WeakEntity<App>, visible: usize) ->
                 "暂停刷新"
             },
             table.paused,
-            {
-                let weak = weak.clone();
-                Box::new(move |cx: &mut gpui_kit::App| {
-                    let _ = weak.update(cx, |app, cx| app.toggle_table_pause(cx));
-                }) as Box<dyn Fn(&mut gpui_kit::App)>
-            },
+            App::toggle_table_pause,
+            weak,
         ))
-        .child(tool_button(
+        .child(click_tool(
             "freeze-btn",
             if table.frozen_pid.is_some() {
                 "取消冻结"
@@ -355,26 +386,96 @@ fn table_toolbar(overview: &Overview, weak: &WeakEntity<App>, visible: usize) ->
                 "排序冻结"
             },
             table.frozen_pid.is_some(),
-            {
-                let weak = weak.clone();
-                Box::new(move |cx: &mut gpui_kit::App| {
-                    let _ = weak.update(cx, |app, cx| app.toggle_table_freeze(cx));
-                }) as Box<dyn Fn(&mut gpui_kit::App)>
-            },
+            App::toggle_table_freeze,
+            weak,
+        ));
+    if let Some(error) = overview.table_error {
+        bottom = bottom.child(txt(error.to_string(), 9.5, FontWeight::NORMAL, warn()));
+    }
+    controls = controls.child(bottom).child(txt(
+        format!(
+            "关注规则关注名称 + 用户（不绑定会复用的 PID）· 日志与偏好自动保存 · {}",
+            crate::table_prefs::path().display()
+        ),
+        9.,
+        FontWeight::NORMAL,
+        dim(),
+    ));
+    controls
+}
+
+fn scope_button(scope: Scope, active: bool, weak: &WeakEntity<App>) -> Stateful<Div> {
+    let weak = weak.clone();
+    div()
+        .id(("scope", scope as usize))
+        .cursor_pointer()
+        .px(px(10.))
+        .py(px(8.))
+        .border(px(1.))
+        .border_color(line())
+        .bg(if active { text() } else { black() })
+        .hover(|this| this.border_color(accent()))
+        .on_click(move |_, _, cx| {
+            let _ = weak.update(cx, |app, cx| app.set_table_scope(scope, cx));
+        })
+        .child(caps(
+            scope.label(),
+            9.5,
+            FontWeight::NORMAL,
+            if active { black() } else { muted() },
+            0.14,
         ))
+}
+
+fn state_button(filter: StateFilter, active: bool, weak: &WeakEntity<App>) -> Stateful<Div> {
+    let weak = weak.clone();
+    div()
+        .id(filter.id())
+        .cursor_pointer()
+        .px(px(7.))
+        .py(px(8.))
+        .border(px(1.))
+        .border_color(if active { accent() } else { line() })
+        .bg(if active { accent() } else { black() })
+        .hover(|this| this.border_color(accent()))
+        .on_click(move |_, _, cx| {
+            let _ = weak.update(cx, |app, cx| app.set_table_state(filter, cx));
+        })
+        .child(caps(
+            filter.short(),
+            9.,
+            FontWeight::NORMAL,
+            if active { text() } else { dim() },
+            0.12,
+        ))
+}
+
+fn click_tool(
+    id: &'static str,
+    label: &str,
+    active: bool,
+    method: fn(&mut App, &mut Context<App>),
+    weak: &WeakEntity<App>,
+) -> Stateful<Div> {
+    tool_button(id, label, active, {
+        let weak = weak.clone();
+        Box::new(move |cx: &mut gpui_kit::App| {
+            let _ = weak.update(cx, |app, cx| method(app, cx));
+        }) as Box<dyn Fn(&mut gpui_kit::App)>
+    })
 }
 
 fn tool_button(
     id: &'static str,
-    label: &'static str,
+    label: &str,
     active: bool,
     handler: Box<dyn Fn(&mut gpui_kit::App)>,
 ) -> Stateful<Div> {
     div()
         .id(id)
         .cursor_pointer()
-        .px(px(13.))
-        .py(px(9.))
+        .px(px(10.))
+        .py(px(7.))
         .border(px(1.))
         .border_color(if active { accent() } else { line_strong() })
         .bg(if active { accent() } else { black() })
@@ -382,10 +483,10 @@ fn tool_button(
         .on_click(move |_, _, cx| handler(cx))
         .child(caps(
             label,
-            10.,
+            9.5,
             FontWeight::NORMAL,
             if active { text() } else { muted() },
-            0.14,
+            0.12,
         ))
 }
 
@@ -446,7 +547,7 @@ fn table_header(overview: &Overview, weak: &WeakEntity<App>) -> Div {
 fn table_row(
     index: usize,
     process: &Process,
-    selected: bool,
+    overview: &Overview,
     weak: &WeakEntity<App>,
 ) -> Stateful<Div> {
     let pid = process.pid;
@@ -454,14 +555,37 @@ fn table_row(
     let menu_press_weak = weak.clone();
     let kill_weak = weak.clone();
     let force_weak = weak.clone();
-    h().items_center()
+    let watch_weak = weak.clone();
+    let selected = overview.proc_selected == Some(process.pid);
+    let watched = overview.table.is_watched(process);
+    let change = overview.table.highlight_kind(pid);
+    let change_color = match change {
+        Some(ChangeKind::State) => warn(),
+        Some(ChangeKind::Cpu) => accent(),
+        Some(ChangeKind::Memory) => accent_hover(),
+        Some(ChangeKind::New) => ok(),
+        None => alpha(0x00000000),
+    };
+    let mut row = h()
+        .items_center()
         .id(("proc", index))
         .cursor_pointer()
-        .py(px(11.))
+        .py(px(overview.table.density.padding()))
         .border_b(px(1.))
         .border_color(line_faint())
         .when(selected, |this| this.bg(alpha(0xffffff0c)))
-        .hover(|this| this.bg(alpha(0xffffff06)))
+        .hover(|this| this.bg(alpha(0xffffff06)));
+    if change.is_some() {
+        row = row.child(
+            div()
+                .w(px(2.))
+                .h(px(18.))
+                .mr(px(8.))
+                .flex_shrink_0()
+                .bg(change_color),
+        );
+    }
+    row = row
         .on_click(move |_, _, cx| {
             let _ = sel_weak.update(cx, |app, cx| app.select_process(pid, cx));
         })
@@ -472,16 +596,41 @@ fn table_row(
             let _ = menu_press_weak.update(cx, |app, cx| {
                 app.toggle_process_menu(pid, pos.x.as_f32(), pos.y.as_f32(), cx)
             });
-        })
+        });
+    let mut name = h()
+        .flex_1()
+        .min_w_0()
+        .items_center()
+        .gap(px(6.))
         .child(
-            h().flex_1()
-                .min_w_0()
-                .items_center()
-                .gap(px(8.))
-                .child(txt(process.name.clone(), 12.5, FontWeight::NORMAL, text()))
-                .child(txt(format!("PID {pid}"), 10.5, FontWeight::NORMAL, dim()))
-                .child(txt(process.user.clone(), 10.5, FontWeight::NORMAL, dim())),
+            div()
+                .id(("watch", index))
+                .cursor_pointer()
+                .px(px(3.))
+                .on_click(move |_, _, cx| {
+                    cx.stop_propagation();
+                    let _ = watch_weak.update(cx, |app, cx| app.toggle_table_watch(pid, cx));
+                })
+                .child(txt(
+                    if watched { "★" } else { "☆" },
+                    13.,
+                    FontWeight::NORMAL,
+                    if watched { accent() } else { dim() },
+                )),
         )
+        .child(txt(process.name.clone(), 12.5, FontWeight::NORMAL, text()))
+        .child(txt(format!("PID {pid}"), 10.5, FontWeight::NORMAL, dim()))
+        .child(txt(process.user.clone(), 10.5, FontWeight::NORMAL, dim()));
+    if let Some(kind) = change {
+        name = name.child(caps(
+            kind.label(),
+            8.,
+            FontWeight::MEDIUM,
+            change_color,
+            0.16,
+        ));
+    }
+    row.child(name)
         .child(div().w(px(120.)).flex_shrink_0().child(caps(
             process.state.label(),
             9.5,
@@ -543,6 +692,7 @@ fn table_row(
                         .border_color(line_strong())
                         .hover(|this| this.border_color(accent()).text_color(accent()))
                         .on_click(move |_, _, cx| {
+                            cx.stop_propagation();
                             let _ = kill_weak.update(cx, |app, cx| {
                                 app.request_signal(pid, ProcAction::Terminate, cx)
                             });
@@ -559,6 +709,7 @@ fn table_row(
                         .border_color(line_strong())
                         .hover(|this| this.border_color(accent()).text_color(accent()))
                         .on_click(move |_, _, cx| {
+                            cx.stop_propagation();
                             let _ = force_weak.update(cx, |app, cx| {
                                 app.request_signal(pid, ProcAction::Kill, cx)
                             });
@@ -939,6 +1090,12 @@ pub fn overlays(state: ProcOverlays, weak: &WeakEntity<App>) -> Div {
         frozen,
         viewport,
         menu_name,
+        menu_watched,
+        log_open,
+        log,
+        log_path,
+        table_error,
+        log_led,
     } = state;
     // A zero-footprint container. The overlays themselves are absolutely
     // positioned against the window root (the only `relative()` ancestor), so
@@ -951,14 +1108,32 @@ pub fn overlays(state: ProcOverlays, weak: &WeakEntity<App>) -> Div {
     } else if let Some((pid, x, y)) = menu {
         let (w, h) = viewport;
         let menu_w = 224.;
-        let menu_h = 380.;
+        let menu_h = 430.;
         let left = x.clamp(8., (w - menu_w - 12.).max(8.));
         let top = y.clamp(8., (h - menu_h - 12.).max(8.));
         // No full-screen backdrop: an occluding scrim would receive the
         // mouse-down before a menu item's click listener fires and close the
         // menu too early. `context_menu` closes itself on any outside press.
         root = root.child(context_menu(
-            pid, &menu_name, left, top, paused, frozen, selected, weak,
+            pid,
+            &menu_name,
+            left,
+            top,
+            paused,
+            frozen,
+            selected,
+            menu_watched,
+            weak,
+        ));
+    }
+
+    if log_open {
+        root = root.child(log_drawer(
+            &log,
+            &log_path,
+            table_error.as_deref(),
+            log_led,
+            weak,
         ));
     }
 
@@ -1115,6 +1290,7 @@ fn context_menu(
     paused: bool,
     frozen: Option<u32>,
     selected: Option<u32>,
+    watched: bool,
     weak: &WeakEntity<App>,
 ) -> Stateful<Div> {
     let focus = weak.clone();
@@ -1126,6 +1302,7 @@ fn context_menu(
     let kill = weak.clone();
     let stop = weak.clone();
     let cont = weak.clone();
+    let watch = weak.clone();
     let close = weak.clone();
     v().id("proc-menu")
         .absolute()
@@ -1180,6 +1357,21 @@ fn context_menu(
             {
                 Box::new(move |cx: &mut GpuiApp| {
                     let _ = copy_cmd.update(cx, |app, cx| app.copy_process_command(pid, cx));
+                })
+            },
+        ))
+        .child(menu_item(
+            "menu-watch",
+            if watched {
+                "取消关注 · 移出置顶"
+            } else {
+                "关注此进程 · 置顶"
+            },
+            "Ctrl+W",
+            false,
+            {
+                Box::new(move |cx: &mut GpuiApp| {
+                    let _ = watch.update(cx, |app, cx| app.toggle_table_watch(pid, cx));
                 })
             },
         ))
@@ -1306,6 +1498,158 @@ fn menu_separator() -> Div {
     div().h(px(1.)).my(px(5.)).bg(line())
 }
 
+/// `26 · 操作日志`: a real, persistent journal of signals, watch rules,
+/// refresh-rate changes, pause and freeze. Empty until something happened.
+fn log_drawer(
+    log: &[crate::table_prefs::Entry],
+    path: &str,
+    error: Option<&str>,
+    led: &crate::scroll::Led,
+    weak: &WeakEntity<App>,
+) -> Stateful<Div> {
+    let scrim_close = weak.clone();
+    let button_close = weak.clone();
+    let copy = weak.clone();
+    let mut list = v().gap(px(1.));
+    if log.is_empty() {
+        list = list.child(
+            v().py(px(28.))
+                .child(txt("还没有操作记录", 12., FontWeight::NORMAL, muted()))
+                .child(
+                    txt(
+                        "发送信号、关注进程或调整刷新频率后，这里会留下时间戳。",
+                        10.,
+                        FontWeight::NORMAL,
+                        dim(),
+                    )
+                    .mt(px(8.)),
+                ),
+        );
+    } else {
+        for (index, entry) in log.iter().enumerate() {
+            list = list.child(
+                h().id(("log", index))
+                    .items_center()
+                    .gap(px(10.))
+                    .py(px(7.))
+                    .border_b(px(1.))
+                    .border_color(line_faint())
+                    .child(txt(entry.at.clone(), 9.5, FontWeight::NORMAL, dim()))
+                    .child(div().w(px(62.)).flex_shrink_0().child(caps(
+                        entry.kind.as_str(),
+                        8.5,
+                        FontWeight::MEDIUM,
+                        muted(),
+                        0.14,
+                    )))
+                    .child(
+                        txt(
+                            entry.detail.clone(),
+                            10.5,
+                            FontWeight::NORMAL,
+                            if entry.ok { text() } else { warn() },
+                        )
+                        .flex_1()
+                        .min_w_0()
+                        .text_ellipsis(),
+                    ),
+            );
+        }
+    }
+    h().id("log-scrim")
+        .absolute()
+        .top(px(0.))
+        .left(px(0.))
+        .size_full()
+        .bg(alpha(0x000000b8))
+        .occlude()
+        .justify_end()
+        .items_stretch()
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            let _ = scrim_close.update(cx, |app, cx| app.toggle_proc_log(cx));
+        })
+        .child(
+            v().id("log-panel")
+                .w(px(560.))
+                .h_full()
+                .bg(black())
+                .border_l(px(1.))
+                .border_color(line_strong())
+                .p(px(26.))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(
+                    h().justify_between()
+                        .items_center()
+                        .child(caps(
+                            "操作日志 · 最近 200 条",
+                            10.,
+                            FontWeight::NORMAL,
+                            dim(),
+                            0.24,
+                        ))
+                        .child(
+                            div()
+                                .id("log-close")
+                                .cursor_pointer()
+                                .px(px(10.))
+                                .py(px(5.))
+                                .border(px(1.))
+                                .border_color(line_strong())
+                                .on_click(move |_, _, cx| {
+                                    cx.stop_propagation();
+                                    let _ =
+                                        button_close.update(cx, |app, cx| app.toggle_proc_log(cx));
+                                })
+                                .child(caps("关闭 · Esc", 9., FontWeight::NORMAL, muted(), 0.12)),
+                        ),
+                )
+                .child(
+                    txt(
+                        format!("自动保存到 {}", path),
+                        9.5,
+                        FontWeight::NORMAL,
+                        dim(),
+                    )
+                    .mt(px(7.)),
+                )
+                .when_some(error, |this, error| {
+                    this.child(txt(error.to_string(), 9.5, FontWeight::NORMAL, warn()).mt(px(7.)))
+                })
+                .child(h().gap(px(8.)).mt(px(16.)).child(detail_button(
+                    ("log-copy", 0),
+                    "复制日志 TSV",
+                    false,
+                    Box::new(move |cx: &mut GpuiApp| {
+                        let _ = copy.update(cx, |app, cx| app.copy_table_log(cx));
+                    }),
+                )))
+                .child(
+                    v().relative()
+                        .flex_1()
+                        .min_h_0()
+                        .mt(px(16.))
+                        .child(
+                            v().id("log-rows")
+                                .absolute()
+                                .top(px(0.))
+                                .left(px(0.))
+                                .right(px(22.))
+                                .bottom(px(0.))
+                                .overflow_y_scroll()
+                                .track_scroll(led.handle())
+                                .child(list),
+                        )
+                        .child(crate::led_column(
+                            "led-log",
+                            led,
+                            0.,
+                            crate::scroll::Target::Log,
+                            weak,
+                        )),
+                ),
+        )
+}
+
 fn detail_panel(
     _overview: &Overview,
     process: Option<&Process>,
@@ -1323,7 +1667,10 @@ fn detail_panel(
     let cont = weak.clone();
     let copy_row = weak.clone();
     let copy_cmd = weak.clone();
-    let focus = weak.clone();
+    let watch = weak.clone();
+    let log = weak.clone();
+    let log_focus = weak.clone();
+    let watched = _overview.table.is_watched(process);
     let command = {
         let cmd = proc::command(pid);
         if cmd.is_empty() {
@@ -1416,6 +1763,30 @@ fn detail_panel(
                 h().gap(px(8.))
                     .mt(px(8.))
                     .child(detail_button(
+                        ("detail-watch", pid as usize),
+                        if watched {
+                            "取消关注"
+                        } else {
+                            "关注 · 置顶"
+                        },
+                        false,
+                        Box::new(move |cx: &mut GpuiApp| {
+                            let _ = watch.update(cx, |app, cx| app.toggle_table_watch(pid, cx));
+                        }),
+                    ))
+                    .child(detail_button(
+                        ("detail-log", pid as usize),
+                        "操作日志",
+                        false,
+                        Box::new(move |cx: &mut GpuiApp| {
+                            let _ = log.update(cx, |app, cx| app.toggle_proc_log(cx));
+                        }),
+                    )),
+            )
+            .child(
+                h().gap(px(8.))
+                    .mt(px(8.))
+                    .child(detail_button(
                         ("detail-stop", pid as usize),
                         "暂停",
                         false,
@@ -1466,7 +1837,7 @@ fn detail_panel(
                     .border_t(px(1.))
                     .border_color(line())
                     .on_click(move |_, _, cx| {
-                        let _ = focus.update(cx, |app, cx| app.focus_process_detail(pid, cx));
+                        let _ = log_focus.update(cx, |app, cx| app.focus_process_detail(pid, cx));
                     })
                     .child(txt(
                         "右键菜单里有更多操作 · 点击保持选中",

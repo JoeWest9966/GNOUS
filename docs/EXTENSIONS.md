@@ -92,12 +92,19 @@ default = true
 | `processes` | 页面级 | Overview 分区下的 5 个视图：Table / Live / Memory / Tree / Groups |
 | `gnome-fixes` | 页面级 | Extensions 分区下的 Fixes：5 个小补丁统一「体检 / 应用 / 回退」；`clipfix` / `rootdesk` 由共用内建后端提供结构化状态，另外 3 项仍走外部工具 |
 | `root-align` | 页面级 | Extensions 分区下的 Align：C 方案诊断台，8 个 systemd 用户单元按功能域分组；`status` / `doctor` / 动作 stdout 原样展示，健康结论来自内建 facts |
-| `startup-layouts` | 页面级 | 左列独立分区 Startup，三个视图 Layouts / Boot / Journal：勾选开机铺开的页面、按比例排列窗口、配置启动策略 |
-| `openshell` | 页面级 | Extensions 分区下的 OpenShell：8 个视图 / 45 个区块，全部读 `openshell` CLI 的真实 stdout（网关、沙箱、执行、转发、策略、凭据、日志、工具），失败原样展示 |
+| `startup-layouts` | 页面级 | 左列独立分区 Startup，四个视图 Layouts / Boot / Journal / 项目：勾选开机铺开的页面、按比例排列窗口、配置启动策略、登记自研启动项目脚本 |
+| `openshell` | 页面级 | 左列独立分区 OpenShell（立方体图标，排在 Extensions 之后）：8 个视图 / 45 个区块独占顶栏，全部读 `openshell` CLI 的真实 stdout（网关、沙箱、执行、转发、策略、凭据、日志、工具），失败原样展示；进入分区即探测一次 |
 
 `startup-layouts` 的配置存在 `$XDG_CONFIG_HOME/gnous/startup.json`（缺省 `~/.config/gnous/startup.json`），
 每次改动立即写盘；「预演一遍」只做可证明的事——把每个启动命令拿到 `PATH` 里解析，找不到就显示找不到。
 真正开窗的执行器尚未实现，所以「上次启动」「启动日志」保持空态，不填演示数据。
+
+「项目」视图管的是**用户自研的启动项目脚本**，不是 `.desktop` 也不是扩展：
+一个项目 = `$XDG_CONFIG_HOME/gnous/projects/<id>/` 下的 `project.toml` 清单 + 它指向的脚本。
+页面只做登记与读取——`project.toml` 里有几个就列几个，缺清单、脚本缺失、没有可执行位
+都按真实情况标出来（绿 / 黄 / 红点 + 解析器原话），勾选「随开机启动」直接改写该项目的
+`project.toml`，注释与其它字段原样保留。执行器未接入，所以「运行」按钮是灰的，
+不会启动任何进程。
 
 `src/fixes_backend/` 是内建补丁的共用深模块：`run(tool, op)` 返回 `Outcome { ok, output, facts }`，
 状态写在 `~/.local/state/gnous/fixes/*.json`，每次动作追加 `audit.jsonl`；`GNOUS_STATE_HOME` 可覆盖（测试隔离）。
