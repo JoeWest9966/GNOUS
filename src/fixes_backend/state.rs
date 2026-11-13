@@ -18,8 +18,9 @@ pub fn state_dir() -> PathBuf {
     base.join("gnous/fixes")
 }
 
-pub fn state_file() -> PathBuf {
-    state_dir().join("state.json")
+/// 每个工具一个状态文件，路径由工具自己给出，避免出现共用假名。
+pub fn path_for(name: &str) -> PathBuf {
+    state_dir().join(name)
 }
 
 pub fn audit_file() -> PathBuf {

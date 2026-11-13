@@ -234,7 +234,7 @@ fn status(op: Op) -> super::Outcome {
         "units": unit_values,
         "domains": DOMAINS.iter().map(|(name, description)| json!({"name": name, "description": description})).collect::<Vec<_>>(),
         "audio": audio_value,
-        "state_file": state::state_file(),
+        "state_file": state::path_for(STATE_NAME),
     });
     let output = render_status(&facts);
     outcome(Tool::RootAlign, op, true, output, facts)
@@ -355,7 +355,7 @@ fn apply() -> super::Outcome {
         "created_overrides": created,
         "starts": starts,
         "units": unit_values,
-        "state_file": state::state_file(),
+        "state_file": state::path_for(STATE_NAME),
     });
     let output = format!(
         "── 应用内建对齐 ──\n  ✓ 写入/确认 {} 个用户单元覆盖\n  ✓ daemon-reload\n  ✓ 按 socket → service 顺序启动\n  {}\n\n结构化状态：{facts}\n音量条可能需要重启 GNOME Shell；该动作在独立危险区，不会自动执行。",
@@ -398,7 +398,7 @@ fn revert() -> super::Outcome {
         "status": "reverted",
         "stopped": owned,
         "removed_override_dirs": removed,
-        "state_file": state::state_file(),
+        "state_file": state::path_for(STATE_NAME),
     });
     let output = format!(
         "── 回退内建对齐 ──\n  ✓ 停止 {} 个单元（未禁用全局启用）\n  ✓ 删除 {} 个 .d/override.conf\n  ✓ daemon-reload，JSON 状态已清除\n  ✓ 旧 key=value 状态文件已清理\n\n结构化状态：{facts}",

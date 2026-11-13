@@ -346,7 +346,7 @@ fn apply() -> super::Outcome {
          深度验证：{}\n\
          下一步：关掉所有终端窗口再重新打开；不会自动终止终端进程。\n\
          结构化状态：{facts}",
-        state::state_file().display(),
+        state::path_for(STATE_NAME).display(),
         match verify {
             Some(true) => "新单元继承到 x11 ✅",
             Some(false) => "新单元未继承到 x11（补丁仍已设置）",

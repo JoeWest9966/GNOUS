@@ -131,8 +131,8 @@ pub fn backend_dir() -> PathBuf {
     state::state_dir()
 }
 
-pub fn state_file() -> PathBuf {
-    state::state_file()
+pub fn path_for(name: &str) -> PathBuf {
+    state::path_for(name)
 }
 
 pub fn audit_file() -> PathBuf {
