@@ -5,6 +5,44 @@
 - `0.x.y-preview.N`：开发预览版。可在本机安装、验证，但仍有占位页与未完成能力。
 - `0.x.y`：功能稳定后的正式小版本。
 
+## [0.2.0-preview.5] - 2026-11-13
+
+`clipfix` 与 `rootdesk` 两套外部脚本逻辑内嵌为 GNOUS 自带的 Rust 后端，
+不再依赖 `/home/root/GNOME` 下的脚本目录。
+
+### 内建后端 `src/fixes_backend/`
+
+- 单一入口 `run(tool, op) -> Outcome { ok, output, facts }`：`Tool::{Clipfix, RootAlign}` ×
+  `Op::{Check, Status, Doctor, Apply, Revert, RestartShell}`，UI 只看结构化 `facts`，
+  不再解析人类可读 stdout（stdout 仍原样展示，失败不会被画成绿灯）。
+- 一个 provider 两个入口：`gnome-fixes` 的 `rootdesk` 卡片与 `root-align` 诊断台
+  共用同一份 systemd 单元逻辑，8 个单元 / 4 个功能域只有一处定义。
+- 状态与审计：`~/.local/state/gnous/fixes/{clipfix,root-align}.json` +
+  append-only `audit.jsonl`（只记动作与结论，不记剪贴板内容）；`GNOUS_STATE_HOME`
+  可覆盖以隔离测试。
+- 旧状态一次性迁移：`~/.local/state/clipfix/manifest.txt` 与
+  `/root/.config/root-gnome-align/state.json` 读入新 JSON 后删除旧文件；
+  迁移完成后两个外部目录可以整体删除。
+- clipfix 内建真实探测：Wayland 双连接回环自测（子进程 holder + 独立 reader）、
+  X11 selection owner 反查、终端后端探测；GNOUS 自身跑在 X11 时从
+  `systemctl --user show-environment` 取会话 compositor，后端与探测目标解耦。
+  `apply / revert` 只改 `systemctl --user set-environment GDK_BACKEND=x11`，幂等可回滚。
+- root-align 内建全部动作：`status` / `doctor`（`ConditionUser` 溯源 + 日志跳过记录）/
+  `apply`（写 `ConditionUser=` override 并按 socket→service 顺序启动）/ `revert`
+  （只删 GNOUS 拥有的 `.d` 目录）/ `restart-shell`（失败时提示手工 `Alt+F2 r`）。
+- 危险 flags（`--now` / `--restart` / `--run --yes`）在接口层就不存在；
+  `restart-shell` 仍只放在 ALIGN 页独立危险区、不进批量流程。
+- 范围：`多屏幕` / `终端字体` / `代理工具` 本轮不动，继续走 `GNOUS_FIXES_ROOT`
+  外部工具，等各自成为独立扩展时再按同一思路迁移。
+
+### 工程
+
+- 新增 `src/fixes_backend/{mod,state,audit,process,clipfix,root_align,wayland,x11}.rs`；
+  `src/fixes.rs` / `src/root_align.rs` 退化为适配层，只做字段映射与文案。
+- `run_bounded` 改用 `poll(2)` 轮询排空管道，修掉孙进程占住管道导致
+  `clipfix revert` 卡死 124 秒的问题（现在 ~0.23s 完成）。
+- `cargo build` 零警告、`cargo test` 48 项通过、`cargo fmt --check` 干净。
+
 ## [0.2.0-preview.4] - 2026-11-13
 
 Table 页封版（P2 收官），外加两个分区级调整。
