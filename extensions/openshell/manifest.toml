@@ -5,11 +5,11 @@ version = "0.1.0"
 capabilities = ["page"]
 icon = "box"
 
-# 页面级扩展：挂在「扩展」分区，在 Align 之后出现
+# 页面级扩展：左列 rail 的独立分区，沙箱工作面不再挤在「扩展」顶栏里
 [nav]
 label = "OpenShell"
-section = "extensions"
-order = 40
+section = "openshell"
+order = 45
 
 [[views]]
 id = "gateway"

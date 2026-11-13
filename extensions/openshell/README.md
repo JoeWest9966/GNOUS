@@ -3,10 +3,17 @@
 一个页面级扩展：在「扩展」分区新增 8 个视图、45 个区块，把 `openshell` CLI 的网关 / 沙箱 / 策略 / 凭据 /
 观测能力收成一块工作面。选型过程见 `demo/openshell-panel/`（模块挑选器）。
 
+## 位置
+
+「沙箱」占左列 rail 的一个独立分区（立方体图标，排在 Extensions 之后），不与
+Fixes / Align 共用一个顶栏。`Section::Openshell` 的 core 页为空，8 个 tab 全部来自
+manifest 的 `[[views]]`。
+
 ## 页面结构
 
-顶栏 tab 来自 manifest，进入任一 tab 时触发一次只读探测（`enter_openshell_page`），
-之后可手动 `REFRESH`。探测在后台线程跑，UI 只翻 `busy`。
+顶栏 tab 来自 manifest。点 rail 图标进入分区（`go_section`）或切到任一 tab
+（`go_page`）都会触发一次只读探测（`enter_openshell_page`），之后可手动 `REFRESH`。
+探测在后台线程跑，UI 只翻 `busy`；动作用 `run_openshell`，成功后自动重探。
 
 | View | 区块 | 主要数据来源 |
 | --- | --- | --- |
