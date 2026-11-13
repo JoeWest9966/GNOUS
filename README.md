@@ -62,7 +62,10 @@
 - 页面级扩展按 `docs/EXTENSIONS.md` 的 manifest + registry 机制接入：
   `gnome-fixes` 把 5 个 GNOME 小补丁收成「体检 / 应用 / 回退」；其中剪贴板与 root
   桌面对齐已内建为 `src/fixes_backend/` 的 Rust 后端（结构化 facts / JSON 状态 / 审计日志），
-  `root-align` 是同一后端的 C 方案诊断台，按功能域列出 8 个 systemd 用户单元。
+  `root-align` 是同一后端的 C 方案诊断台，按功能域列出 8 个 systemd 用户单元；
+  `proxy-tools` 把本机代理中继（原本是 `/home/root/GNOME` 里的 python + bash 脚本）
+  重写成自带的标准库 Rust 中继，并给出只读诊断台：旧单元只读、危险 systemd 动词
+  在接口层不存在、交棒命令只打印不执行。
   另外 3 项仍走外部工具，输出不明时显示失败原因而不伪造状态；危险动作二次确认，
   `restart-shell` 不进入批量流程。
 - 顶栏同时是客户端标题栏：拖动、双击最大化、右键原生窗口菜单，四边四角提供隐形缩放热区。
@@ -107,7 +110,8 @@ src/
 ├── fixes.rs   # gnome-fixes 的清单、外部命令解析与体检状态
 ├── fixes_backend/ # clipfix / root-align 共用的内建 Rust 后端、JSON 状态与审计
 ├── root_align.rs # root-align 页面状态与内建后端适配
-├── pages/     # 页面级扩展渲染器：processes / gnome_fixes / root_align
+├── proxy_tools/ # 代理工具内建后端：guard 闸门 / std 中继 / 只读诊断 / 配置
+├── pages/     # 页面级扩展渲染器：processes / gnome_fixes / root_align / proxy_tools
 ├── toggles.rs # 右侧快捷开关：gsettings bool/choice 与外部命令，缺失即置灰
 ├── theme.rs   # 设计 token（颜色 / 字体 / 字距 / 行高）与文本辅助函数
 └── icons.rs   # 内联 SVG 线性图标（stroke 1.3，与 demo 完全一致）

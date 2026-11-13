@@ -787,6 +787,10 @@ fn revert_outcome(facts: &StatusFacts) -> Outcome {
         "{} 未被触碰（GNOUS 不管理它）",
         guard::LEGACY_UNITS[0]
     ));
+    lines.push(format!(
+        "配置文件保留：{}（只删单元文件，配置是你填的）",
+        config::config_file().display()
+    ));
     lines.push(
         "控制面（gsettings / environment.d）保持原样；要回直连请手工执行旧工具的 off 脚本。".into(),
     );

@@ -7,5 +7,6 @@
 pub mod gnome_fixes;
 pub mod openshell;
 pub mod processes;
+pub mod proxy_tools;
 pub mod root_align;
 pub mod startup_layouts;

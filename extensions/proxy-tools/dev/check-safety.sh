@@ -32,7 +32,7 @@ if [[ -z "$added" && -z "$untracked" ]]; then
 fi
 
 # 自己与文档里允许出现这些字符串（它们只是在描述规则）。
-allow_files='DEV-SAFETY\.md|INVESTIGATION\.md|dev/'
+allow_files='DEV-SAFETY\.md|INVESTIGATION\.md|README\.md|dev/'
 
 patterns=(
     'systemctl[[:space:]]+--user[[:space:]]+(stop|restart|kill|reload|set-environment|unset-environment|daemon-reload)'

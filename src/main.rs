@@ -173,6 +173,8 @@ pub(crate) struct App {
     fixes_apply_armed: bool,
     /// State of the root-align diagnostic console.
     root_align: root_align::State,
+    /// State of the proxy-tools console (relay + control plane diagnostics).
+    proxy: proxy_tools::State,
     /// Startup layouts: pages, splits and the boot policy (JSON-backed).
     startup: startup::State,
     /// Snapshot + action log of the openshell panel.
@@ -307,6 +309,7 @@ impl App {
             fixes_checked: sys::local_clock(),
             fixes_apply_armed: false,
             root_align: root_align::State::new(),
+            proxy: proxy_tools::State::new(),
             startup: startup::State::load(),
             openshell: openshell::State::new(),
             selected: None,
@@ -466,6 +469,9 @@ impl App {
         // Entering a plugin-owned section is the same event as switching to one
         // of its tabs, so the first probe has to fire here too: `pages()[0]` is
         // the plugin's own view and nothing else would read the gateway.
+        if page.plugin == "proxy-tools" {
+            self.enter_proxy_tools_page(cx);
+        }
         if page.plugin == "root-align" {
             self.enter_root_align_page(cx);
         }
@@ -488,6 +494,9 @@ impl App {
             // Sampling stops while away from the plugin. Re-entering after a
             // long gap is a new baseline, not hundreds of "changed" rows.
             self.reseed_processes();
+        }
+        if page.plugin == "proxy-tools" {
+            self.enter_proxy_tools_page(cx);
         }
         if page.plugin == "root-align" {
             self.enter_root_align_page(cx);
@@ -577,6 +586,71 @@ impl App {
         for id in pending {
             self.run_fix(id, fixes::Action::Apply, cx);
         }
+    }
+
+    /// First entry into the proxy-tools page runs one read-only status probe.
+    /// Nothing is written and no unit is touched; the panel is a readout until
+    /// the operator explicitly arms APPLY / REVERT.
+    fn enter_proxy_tools_page(&mut self, cx: &mut Context<Self>) {
+        if self.proxy.status.is_none() && !self.proxy.busy {
+            self.run_proxy_tools(proxy_tools::Op::Status, cx);
+        }
+    }
+
+    /// Run one proxy-tools op. `apply` / `revert` write only GNOUS-owned files
+    /// and need a second click; `status` / `doctor` are read-only; `handover`
+    /// prints commands and executes nothing.
+    pub(crate) fn run_proxy_tools(&mut self, op: proxy_tools::Op, cx: &mut Context<Self>) {
+        if self.proxy.busy {
+            return;
+        }
+        if op.is_mutating() && self.proxy.armed != Some(op) {
+            self.proxy.armed = Some(op);
+            cx.notify();
+            return;
+        }
+        self.proxy.armed = None;
+        self.proxy.busy = true;
+        let weak = cx.entity().downgrade();
+        let task = cx
+            .background_executor()
+            .spawn(async move { proxy_tools::run(op) });
+        cx.spawn(async move |_, cx| {
+            let outcome = task.await;
+            let recheck = outcome.ok
+                && matches!(outcome.op, proxy_tools::Op::Apply | proxy_tools::Op::Revert);
+            let _ = weak.update(cx, |app: &mut App, cx| {
+                app.proxy.busy = false;
+                app.proxy.absorb(outcome, true);
+                cx.notify();
+                if recheck {
+                    app.run_proxy_tools(proxy_tools::Op::Status, cx);
+                }
+            });
+            cx.refresh();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub(crate) fn select_proxy_tab(&mut self, tab: proxy_tools::Tab, cx: &mut Context<Self>) {
+        self.proxy.tab = tab;
+        // A tab with no result yet reads as "broken"; run its op instead, which
+        // for STATUS/DOCTOR is read-only and for HANDOVER only prints.
+        if self.proxy.outcome(tab).is_none() && !self.proxy.busy {
+            let op = match tab {
+                proxy_tools::Tab::Status => proxy_tools::Op::Status,
+                proxy_tools::Tab::Doctor => proxy_tools::Op::Doctor,
+                proxy_tools::Tab::Plan => proxy_tools::Op::Handover,
+            };
+            self.run_proxy_tools(op, cx);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn select_proxy_face(&mut self, face: usize, cx: &mut Context<Self>) {
+        self.proxy.face = face;
+        cx.notify();
     }
 
     /// Run one root-align action. Mutating actions need a second click; after
@@ -1361,6 +1435,7 @@ impl Render for App {
                             fixes_checked: &self.fixes_checked,
                             fixes_apply_armed: self.fixes_apply_armed,
                             root_align: &self.root_align,
+                            proxy: &self.proxy,
                             startup: &self.startup,
                             openshell: &self.openshell,
                             content_led: &self.content_led,
@@ -1810,6 +1885,8 @@ pub(crate) struct Overview<'a> {
     pub(crate) fixes_apply_armed: bool,
     /// Verbatim stdout and parsed state of the root-align console.
     pub(crate) root_align: &'a root_align::State,
+    /// Relay / control-plane state of the proxy-tools extension.
+    pub(crate) proxy: &'a proxy_tools::State,
     /// Startup layouts model + probes.
     pub(crate) startup: &'a startup::State,
     /// Snapshot and action log of the openshell panel.
@@ -1828,6 +1905,7 @@ fn content(overview: &Overview, cx: &mut Context<App>) -> impl IntoElement {
         ("processes", view) => pages::processes::body(view, overview, &weak),
         ("gnome-fixes", _) => pages::gnome_fixes::body(overview, &weak),
         ("root-align", _) => pages::root_align::body(overview, &weak),
+        ("proxy-tools", _) => pages::proxy_tools::body(overview, &weak),
         ("startup-layouts", view) => pages::startup_layouts::body(view, overview, &weak),
         ("openshell", view) => pages::openshell::body(view, overview, &weak),
         (_, label) => placeholder(label),

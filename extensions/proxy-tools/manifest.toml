@@ -1,0 +1,16 @@
+id = "proxy-tools"
+name = "代理工具"
+summary = "本机中继与控制面诊断台：只读探测真实端口 / 单元 / 环境，GNOUS 只写自己的文件，绝不启停承载联网的旧中继"
+version = "0.1.0"
+capabilities = ["page"]
+icon = "network"
+
+# 页面级扩展：挂在「扩展」分区，排在 Align 之后
+[nav]
+label = "Proxy"
+section = "extensions"
+order = 40
+
+[[views]]
+id = "proxy"
+label = "Proxy"

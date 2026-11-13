@@ -93,6 +93,7 @@ default = true
 | `gnome-fixes` | 页面级 | Extensions 分区下的 Fixes：5 个小补丁统一「体检 / 应用 / 回退」；`clipfix` / `rootdesk` 由共用内建后端提供结构化状态，另外 3 项仍走外部工具 |
 | `root-align` | 页面级 | Extensions 分区下的 Align：C 方案诊断台，8 个 systemd 用户单元按功能域分组；`status` / `doctor` / 动作 stdout 原样展示，健康结论来自内建 facts |
 | `startup-layouts` | 页面级 | 左列独立分区 Startup，四个视图 Layouts / Boot / Journal / 项目：勾选开机铺开的页面、按比例排列窗口、配置启动策略、登记自研启动项目脚本 |
+| `proxy-tools` | 页面级 | Extensions 分区下的 Proxy：诊断台三面（只读诊断 / GNOUS 自带中继 / 控制面只读展示）；`status` / `doctor` 只读，`apply` / `revert` 只写 GNOUS 自己的配置与单元文件，`handover` 只打印交棒命令，旧 `j1900-proxy.service` 只读 |
 | `openshell` | 页面级 | 左列独立分区 OpenShell（立方体图标，排在 Extensions 之后）：8 个视图 / 45 个区块独占顶栏，全部读 `openshell` CLI 的真实 stdout（网关、沙箱、执行、转发、策略、凭据、日志、工具），失败原样展示；进入分区即探测一次 |
 
 `startup-layouts` 的配置存在 `$XDG_CONFIG_HOME/gnous/startup.json`（缺省 `~/.config/gnous/startup.json`），
@@ -111,6 +112,14 @@ default = true
 `GNOUS_FIXES_ROOT` 只用于尚未迁移的 3 个外部工具（默认 `/home/root/GNOME`）；工具缺失时显示失败原因，不伪造状态。
 带副作用的动作一律二次确认，危险 flags（`--now` / `--restart` / `--run --yes`）不从 UI 触发。
 `root-align` 的 `restart-shell` 会打断 GNOME 会话，放在独立危险区且二次确认；`apply / revert` 成功后自动重跑只读 `status`，并把动作 stdout 留在 `APPLY LOG`。
+
+`src/proxy_tools/` 是代理工具的深模块：`run(op)` 返回 `Outcome { ok, output, facts }`，
+UI 只用 facts 判健康。`guard.rs` 把"不许碰承载本机联网的中继"变成编译期常量与唯一
+spawn 闸门（受保护单元 / 端口、禁止的 systemd 动词、`gsettings` 只能 `get`、
+命令静态允许清单）；`relay.rs` 用标准库重写中继（不新增 crate，保证离线可构建）；
+配置在 `~/.config/gnous/proxy-tools.json`，单元文件是 GNOUS 自己的
+`gnous-proxy-relay.service`，旧单元只读。开发期约束见
+`extensions/proxy-tools/DEV-SAFETY.md`。
 
 新增页面级扩展的完整链路：`extensions/<id>/manifest.toml` → `MANIFESTS` 登记 →
 `src/pages/<id>.rs` 实现 `body()` → `src/pages/mod.rs` 导出。
