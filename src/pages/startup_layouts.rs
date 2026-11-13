@@ -15,7 +15,8 @@ use gpui_kit::{
 };
 
 use crate::startup::{
-    self, Display, Page, Preset, Split, State as StartupState, Stepper, WindowSpec,
+    self, Display, Page, Preset, Project, Readiness, Split, State as StartupState, Stepper,
+    WindowSpec,
 };
 use crate::theme::{
     accent, accent_hover, alpha, black, caps, dim, h, line, line_faint, line_strong, muted, ok,
@@ -29,6 +30,7 @@ pub fn body(view: &str, overview: &Overview, weak: &WeakEntity<App>) -> Div {
     match view {
         "boot" => boot(overview, weak),
         "journal" => journal(overview, weak),
+        "projects" => projects(overview, weak),
         _ => layouts(overview, weak),
     }
 }
@@ -1186,6 +1188,603 @@ fn toggle_pill(on: bool) -> Div {
                 .h(px(14.))
                 .rounded_full()
                 .bg(if on { text() } else { muted() }),
+        )
+}
+
+// ============================================================================
+// Projects view
+// ============================================================================
+
+fn projects(overview: &Overview, weak: &WeakEntity<App>) -> Div {
+    let state = overview.startup;
+    v().child(projects_hero(weak))
+        .child(status_line(state))
+        .child(projects_strip(state))
+        .child(
+            h().items_stretch()
+                .border(px(1.))
+                .border_color(line())
+                .h(px(WORKBENCH_HEIGHT))
+                .child(project_pane(overview, weak))
+                .child(script_pane(overview, weak))
+                .child(project_inspector_pane(overview, weak)),
+        )
+        .child(projects_footer())
+}
+
+fn projects_hero(weak: &WeakEntity<App>) -> Div {
+    let rescan_weak = weak.clone();
+    let open_weak = weak.clone();
+    v().mb(px(26.))
+        .child(
+            caps("Startup · 自研项目", 11., FontWeight::NORMAL, dim(), 0.26).mb(px(14.)),
+        )
+        .child(
+            h().w_full()
+                .items_end()
+                .justify_between()
+                .gap(px(24.))
+                .child(
+                    v().flex_1()
+                        .min_w_0()
+                        .child(
+                            txt("项目", 44., FontWeight::EXTRA_LIGHT, text())
+                                .line_height(px(46.)),
+                        )
+                        .child(
+                            txt(
+                                "你自己写的启动项目脚本：每个项目一个目录、一份清单、一支脚本。这里只登记、读取、编排，脚本执行器尚未接入。",
+                                13.,
+                                FontWeight::NORMAL,
+                                muted(),
+                            )
+                            .mt(px(12.)),
+                        ),
+                )
+                .child(
+                    h().items_center()
+                        .gap(px(10.))
+                        .child(hero_button("重新扫描", false, move |cx| {
+                            let _ = rescan_weak.update(cx, |app, cx| app.startup_rescan_projects(cx));
+                        }))
+                        .child(hero_button("打开项目目录", true, move |cx| {
+                            let _ = open_weak.update(cx, |app, cx| app.startup_open_projects(cx));
+                        })),
+                ),
+        )
+        .child(
+            h().items_center()
+                .gap(px(8.))
+                .mt(px(14.))
+                .child(caps("根目录", 9.5, FontWeight::NORMAL, dim(), 0.18))
+                .child(
+                    txt(
+                        startup::projects_root().display().to_string(),
+                        11.,
+                        FontWeight::NORMAL,
+                        muted(),
+                    )
+                    .font_family("Noto Sans Mono CJK SC")
+                    .flex_1()
+                    .min_w_0()
+                    .text_ellipsis(),
+                ),
+        )
+}
+
+fn projects_strip(state: &StartupState) -> Div {
+    let total = state.projects.len();
+    let broken = state
+        .projects
+        .iter()
+        .filter(|project| !project.readiness.is_ready())
+        .count();
+    let ready = state.ready_projects();
+    h().items_stretch()
+        .border_t(px(1.))
+        .border_b(px(1.))
+        .border_color(line())
+        .mb(px(22.))
+        .child(stat_cell(
+            0,
+            "项目",
+            format!("{total}"),
+            if total == 0 {
+                "个".to_string()
+            } else {
+                "个目录".to_string()
+            },
+            text(),
+        ))
+        .child(stat_cell(
+            1,
+            "随开机启动",
+            format!("{}", state.boot_projects()),
+            format!("/ {total} 个"),
+            text(),
+        ))
+        .child(stat_cell(
+            2,
+            "可直接运行",
+            format!("{ready}"),
+            if broken == 0 {
+                format!("/ {total} 个")
+            } else {
+                format!("· {broken} 个待修")
+            },
+            if total == 0 {
+                dim()
+            } else if broken == 0 {
+                ok()
+            } else {
+                warn()
+            },
+        ))
+        .child(stat_cell(
+            3,
+            "扫描",
+            state.projects_at.clone(),
+            "重新扫描前不会自动更新".to_string(),
+            dim(),
+        ))
+}
+
+fn project_pane(overview: &Overview, weak: &WeakEntity<App>) -> Div {
+    let state = overview.startup;
+    let mut rows = v();
+    for (index, project) in state.projects.iter().enumerate() {
+        rows = rows.child(project_row(
+            index,
+            project,
+            project.id == state.project,
+            weak,
+        ));
+    }
+    v().w(px(250.))
+        .flex_shrink_0()
+        .border_r(px(1.))
+        .border_color(line())
+        .child(pane_head(format!("项目 · {}", state.projects.len()), None))
+        .child(if state.projects.is_empty() {
+            v().flex_1()
+                .min_h_0()
+                .p(px(16.))
+                .child(caps("还没有项目", 10.5, FontWeight::NORMAL, muted(), 0.2))
+                .child(
+                    txt(
+                        "在根目录下建一个文件夹，放入 project.toml 和脚本，再点「重新扫描」。右边有模板。",
+                        11.,
+                        FontWeight::NORMAL,
+                        dim(),
+                    )
+                    .line_height(px(18.))
+                    .mt(px(10.)),
+                )
+                .into_any_element()
+        } else {
+            v().id("startup-projects")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .child(rows)
+                .into_any_element()
+        })
+        .child(hint(
+            "勾选框 = 随开机启动。这里改的是项目自己的 project.toml，点一次写入一次。",
+        ))
+}
+
+fn project_row(
+    index: usize,
+    project: &Project,
+    selected: bool,
+    weak: &WeakEntity<App>,
+) -> Stateful<Div> {
+    let select_weak = weak.clone();
+    let check_weak = weak.clone();
+    let id = project.id.clone();
+    let check_id = project.id.clone();
+    let boot = project.boot;
+    let dot = readiness_color(project.readiness);
+    let meta = if let Some(problem) = &project.problem {
+        problem.clone()
+    } else if project.summary.is_empty() {
+        format!("{} · {}", project.script, project.readiness.label())
+    } else {
+        project.summary.clone()
+    };
+    h().id(("startup-project", index))
+        .relative()
+        .items_center()
+        .gap(px(12.))
+        .px(px(16.))
+        .py(px(13.))
+        .cursor_pointer()
+        .border_b(px(1.))
+        .border_color(line_faint())
+        .when(selected, |this| {
+            this.bg(surface_2()).child(
+                div()
+                    .absolute()
+                    .left(px(0.))
+                    .top(px(0.))
+                    .bottom(px(0.))
+                    .w(px(2.))
+                    .bg(accent()),
+            )
+        })
+        .hover(|this| this.bg(surface_2()))
+        .on_click(move |_, _, cx| {
+            let id = id.clone();
+            let _ = select_weak.update(cx, |app, cx| app.startup_select_project(&id, cx));
+        })
+        .child(
+            div()
+                .id(("startup-project-chk", index))
+                .size(px(14.))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .border(px(1.))
+                .border_color(if boot { text() } else { line_strong() })
+                .bg(if boot { text() } else { alpha(0x00000000) })
+                .cursor_pointer()
+                .on_click(move |_, _, cx| {
+                    cx.stop_propagation();
+                    let id = check_id.clone();
+                    let _ =
+                        check_weak.update(cx, |app, cx| app.startup_toggle_project_boot(&id, cx));
+                })
+                .child(
+                    div()
+                        .text_size(px(9.))
+                        .line_height(px(11.))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(black())
+                        .when(boot, |this| this.child("✓")),
+                ),
+        )
+        .child(
+            v().flex_1()
+                .min_w_0()
+                .child(
+                    h().items_center()
+                        .gap(px(7.))
+                        .child(caps(
+                            &format!("{:02}", index + 1),
+                            9.5,
+                            FontWeight::NORMAL,
+                            dim(),
+                            0.14,
+                        ))
+                        .child(
+                            txt(project.name.clone(), 13., FontWeight::NORMAL, text())
+                                .flex_1()
+                                .min_w_0()
+                                .text_ellipsis(),
+                        ),
+                )
+                .child(
+                    txt(meta, 10.5, FontWeight::NORMAL, dim())
+                        .mt(px(3.))
+                        .when(!boot, |this| this.text_color(alpha(0xffffff36)))
+                        .text_ellipsis(),
+                ),
+        )
+        .child(div().size(px(6.)).flex_shrink_0().rounded_full().bg(dot))
+}
+
+fn readiness_color(readiness: Readiness) -> Hsla {
+    match readiness {
+        Readiness::Ready => ok(),
+        Readiness::NotExecutable => warn(),
+        Readiness::Missing => warn(),
+        Readiness::Broken => accent(),
+    }
+}
+
+fn script_pane(overview: &Overview, weak: &WeakEntity<App>) -> Div {
+    let state = overview.startup;
+    let pane = v().flex_1().min_w_0().border_r(px(1.)).border_color(line());
+    match state.selected_project() {
+        None => pane
+            .child(pane_head("脚本".to_string(), None))
+            .child(empty_script(state)),
+        Some(project) => {
+            let copy_weak = weak.clone();
+            let command = project.command();
+            let head = if project.lines > 0 {
+                format!("{}/{} · {} 行", project.id, project.script, project.lines)
+            } else {
+                format!("{}/{}", project.id, project.script)
+            };
+            pane.child(pane_head(
+                head,
+                Some(
+                    div()
+                        .id("startup-project-copy")
+                        .cursor_pointer()
+                        .hover(|this| this.bg(alpha(0xffffff14)))
+                        .px(px(8.))
+                        .py(px(3.))
+                        .on_click(move |_, _, cx| {
+                            let command = command.clone();
+                            let _ = copy_weak
+                                .update(cx, |app, cx| app.copy_text(command, "启动命令", cx));
+                        })
+                        .child(caps("复制命令", 9.5, FontWeight::NORMAL, muted(), 0.16)),
+                ),
+            ))
+            .child(script_body(project))
+            .child(hint(
+                "只读预览，最多 400 行。执行器接入前，这里不会运行脚本。",
+            ))
+        }
+    }
+}
+
+fn empty_script(state: &StartupState) -> Div {
+    let mut template = v();
+    for (index, line) in startup::PROJECT_TEMPLATE.lines().enumerate() {
+        template = template.child(
+            txt(
+                line.to_string(),
+                if line.starts_with('#') { 10.5 } else { 11. },
+                FontWeight::NORMAL,
+                if line.starts_with('#') {
+                    dim()
+                } else {
+                    muted()
+                },
+            )
+            .font_family("Noto Sans Mono CJK SC")
+            .line_height(px(18.))
+            .when(index == 0, |this| this.mb(px(6.))),
+        );
+    }
+    v().flex_1()
+        .min_h_0()
+        .px(px(24.))
+        .py(px(26.))
+        .child(caps("空的项目目录", 11., FontWeight::NORMAL, muted(), 0.2))
+        .child(
+            txt(
+                "建一个文件夹，放一份 project.toml（下面这份是模板）和它指向的脚本。",
+                12.,
+                FontWeight::NORMAL,
+                dim(),
+            )
+            .line_height(px(20.))
+            .mt(px(10.))
+            .mb(px(18.)),
+        )
+        .child(
+            div()
+                .border(px(1.))
+                .border_color(line())
+                .p(px(16.))
+                .child(template),
+        )
+        .when_some(state.projects_error.clone(), |this, error| {
+            this.child(
+                txt(error, 11., FontWeight::NORMAL, warn())
+                    .mt(px(14.))
+                    .line_height(px(18.)),
+            )
+        })
+}
+
+fn script_body(project: &Project) -> AnyElement {
+    match (&project.body, project.readiness) {
+        (Some(body), _) => v()
+            .id("startup-script")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .px(px(20.))
+            .py(px(16.))
+            .child(
+                txt(body.clone(), 11., FontWeight::NORMAL, text())
+                    .font_family("Noto Sans Mono CJK SC")
+                    .line_height(px(19.)),
+            )
+            .into_any_element(),
+        (None, readiness) => v()
+            .flex_1()
+            .min_h_0()
+            .px(px(24.))
+            .py(px(28.))
+            .child(caps(
+                readiness.label(),
+                11.,
+                FontWeight::NORMAL,
+                readiness_color(readiness),
+                0.2,
+            ))
+            .child(
+                txt(
+                    project.problem.clone().unwrap_or_else(|| {
+                        format!("脚本 {} 不存在或不可读。", project.path().display())
+                    }),
+                    12.,
+                    FontWeight::NORMAL,
+                    dim(),
+                )
+                .line_height(px(20.))
+                .mt(px(10.))
+                .max_w(px(520.)),
+            )
+            .into_any_element(),
+    }
+}
+
+fn project_inspector_pane(overview: &Overview, weak: &WeakEntity<App>) -> Div {
+    let state = overview.startup;
+    v().w(px(304.))
+        .flex_shrink_0()
+        .child(pane_head("检查器".to_string(), None))
+        .child(
+            v().id("startup-project-inspect")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .children(project_inspector_groups(state, weak)),
+        )
+}
+
+fn project_inspector_groups(state: &StartupState, weak: &WeakEntity<App>) -> Vec<AnyElement> {
+    let Some(project) = state.selected_project() else {
+        return vec![
+            v().p(px(16.))
+                .child(caps("未选择项目", 10., FontWeight::NORMAL, dim(), 0.2))
+                .child(
+                    txt(
+                        "左侧选中一个项目后，这里显示它的清单字段与启动命令。",
+                        11.5,
+                        FontWeight::NORMAL,
+                        dim(),
+                    )
+                    .line_height(px(19.))
+                    .mt(px(8.)),
+                )
+                .into_any_element(),
+        ];
+    };
+
+    let run_weak = weak.clone();
+    let command = project.command();
+    vec![
+        v().p(px(16.))
+            .border_b(px(1.))
+            .border_color(line())
+            .child(
+                h().items_center()
+                    .justify_between()
+                    .child(caps("项目", 10., FontWeight::NORMAL, dim(), 0.2))
+                    .child(
+                        h().items_center()
+                            .gap(px(6.))
+                            .child(
+                                div()
+                                    .size(px(5.))
+                                    .rounded_full()
+                                    .bg(readiness_color(project.readiness)),
+                            )
+                            .child(caps(
+                                project.readiness.label(),
+                                9.5,
+                                FontWeight::NORMAL,
+                                dim(),
+                                0.14,
+                            )),
+                    ),
+            )
+            .child(
+                div()
+                    .mt(px(10.))
+                    .child(field("名称", project.name.clone(), false)),
+            )
+            .child(field("目录", project.id.clone(), true))
+            .into_any_element(),
+        v().p(px(16.))
+            .border_b(px(1.))
+            .border_color(line())
+            .child(caps(
+                "清单 · project.toml",
+                10.,
+                FontWeight::NORMAL,
+                dim(),
+                0.2,
+            ))
+            .child(
+                div()
+                    .mt(px(8.))
+                    .child(field("入口脚本", project.script.clone(), true)),
+            )
+            .child(field("解释器", project.interpreter.clone(), true))
+            .child(field(
+                "参数",
+                if project.args.is_empty() {
+                    "—".to_string()
+                } else {
+                    project.args.join(" ")
+                },
+                true,
+            ))
+            .child(field(
+                "工作目录",
+                project.workdir().display().to_string(),
+                true,
+            ))
+            .child(field(
+                "随开机启动",
+                if project.boot {
+                    "是".to_string()
+                } else {
+                    "否".to_string()
+                },
+                false,
+            ))
+            .child(field("开机顺序", project.order.to_string(), false))
+            .into_any_element(),
+        v().p(px(16.))
+            .child(caps("运行", 10., FontWeight::NORMAL, dim(), 0.2))
+            .child(
+                txt(command, 10.5, FontWeight::NORMAL, muted())
+                    .font_family("Noto Sans Mono CJK SC")
+                    .line_height(px(18.))
+                    .mt(px(10.))
+                    .max_w(px(272.)),
+            )
+            .child(
+                div()
+                    .id("startup-project-run")
+                    .mt(px(14.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .py(px(10.))
+                    .border(px(1.))
+                    .border_color(line_strong())
+                    .cursor_pointer()
+                    .hover(|this| this.bg(alpha(0xffffff14)))
+                    .on_click(move |_, _, cx| {
+                        let _ =
+                            run_weak.update(cx, |app, cx| app.startup_run_project_unavailable(cx));
+                    })
+                    .child(caps("运行 · 未接入", 10.5, FontWeight::NORMAL, dim(), 0.16)),
+            )
+            .into_any_element(),
+    ]
+}
+
+fn projects_footer() -> Div {
+    h().w_full()
+        .items_start()
+        .justify_between()
+        .gap(px(30.))
+        .border_t(px(1.))
+        .border_color(line())
+        .mt(px(34.))
+        .pt(px(22.))
+        .child(
+            txt(
+                "项目是磁盘上的真实文件：目录里有什么就列什么，清单解析失败会标红并给出解析器原话。这一版不做执行，也不替你写脚本。",
+                12.,
+                FontWeight::NORMAL,
+                dim(),
+            )
+            .line_height(px(22.)),
+        )
+        .child(
+            div()
+                .flex_shrink_0()
+                .border(px(1.))
+                .border_color(line())
+                .px(px(10.))
+                .py(px(5.))
+                .child(caps("TOML · 项目自带", 10., FontWeight::NORMAL, muted(), 0.1)),
         )
 }
 

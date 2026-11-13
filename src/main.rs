@@ -911,6 +911,61 @@ impl App {
         }
         cx.notify();
     }
+
+    pub(crate) fn startup_select_project(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.startup.select_project(id);
+        cx.notify();
+    }
+
+    pub(crate) fn startup_rescan_projects(&mut self, cx: &mut Context<Self>) {
+        self.startup.refresh_projects();
+        match self.startup.projects_error.clone() {
+            Some(error) => {
+                self.startup.note = None;
+                self.startup.error = Some(error);
+            }
+            None => {
+                self.startup.error = None;
+                self.startup.note = Some(format!(
+                    "已扫描 · {} 个项目 · {}",
+                    self.startup.projects.len(),
+                    startup::projects_root().display()
+                ));
+            }
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn startup_toggle_project_boot(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.startup.toggle_project_boot(id);
+        cx.notify();
+    }
+
+    /// Creates the projects folder when it is missing, then hands it to the
+    /// desktop file manager. No project files are generated here.
+    pub(crate) fn startup_open_projects(&mut self, cx: &mut Context<Self>) {
+        let root = startup::projects_root();
+        match std::fs::create_dir_all(&root) {
+            Ok(()) => {
+                self.startup.error = None;
+                self.startup.note = Some(format!("项目目录 · {}", root.display()));
+                let _ = std::process::Command::new("xdg-open").arg(&root).spawn();
+            }
+            Err(why) => {
+                self.startup.note = None;
+                self.startup.error = Some(format!("{} 创建失败：{why}", root.display()));
+            }
+        }
+        cx.notify();
+    }
+
+    /// The run button is deliberately inert: there is no executor yet, and
+    /// this says so instead of faking a launch.
+    pub(crate) fn startup_run_project_unavailable(&mut self, cx: &mut Context<Self>) {
+        self.startup.error = None;
+        self.startup.note = Some("执行器未接入：按钮不会启动任何进程".to_string());
+        cx.notify();
+    }
 }
 
 impl Render for App {

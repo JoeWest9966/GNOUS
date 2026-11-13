@@ -483,12 +483,16 @@ pub fn displays() -> Vec<Display> {
     out
 }
 
-fn config_path() -> PathBuf {
+fn config_dir() -> PathBuf {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
         .unwrap_or_else(|| PathBuf::from("."));
-    base.join("gnous").join("startup.json")
+    base.join("gnous")
+}
+
+fn config_path() -> PathBuf {
+    config_dir().join("startup.json")
 }
 
 /// First whitespace-separated token of a command line.
@@ -560,6 +564,12 @@ pub struct State {
     pub error: Option<String>,
     pub preview: Option<Preview>,
     pub saved_at: String,
+    /// User-authored launch projects, scanned from `<config>/gnous/projects/`.
+    pub projects: Vec<Project>,
+    /// Selected project id; empty when the folder holds no project yet.
+    pub project: String,
+    pub projects_at: String,
+    pub projects_error: Option<String>,
 }
 
 impl State {
@@ -588,6 +598,11 @@ impl State {
             }
         };
         let displays = displays();
+        let (projects, projects_error) = scan_projects();
+        let project = projects
+            .first()
+            .map(|project| project.id.clone())
+            .unwrap_or_default();
         let mut state = Self {
             selected: layout
                 .pages
@@ -601,6 +616,10 @@ impl State {
             error,
             preview: None,
             saved_at: sys::local_clock(),
+            projects,
+            project,
+            projects_at: sys::local_clock(),
+            projects_error,
         };
         if state.layout.boot.primary_display.is_empty() {
             if let Some(display) = state.displays.first() {
@@ -617,6 +636,72 @@ impl State {
 
     pub fn path() -> PathBuf {
         config_path()
+    }
+
+    // ---- projects --------------------------------------------------------
+
+    /// Re-reads the projects folder. Selection is kept when the project still
+    /// exists, otherwise it falls back to the first one.
+    pub fn refresh_projects(&mut self) {
+        let (projects, error) = scan_projects();
+        if !projects.iter().any(|project| project.id == self.project) {
+            self.project = projects
+                .first()
+                .map(|project| project.id.clone())
+                .unwrap_or_default();
+        }
+        self.projects = projects;
+        self.projects_error = error;
+        self.projects_at = sys::local_clock();
+    }
+
+    pub fn selected_project(&self) -> Option<&Project> {
+        self.projects
+            .iter()
+            .find(|project| project.id == self.project)
+    }
+
+    pub fn select_project(&mut self, id: &str) {
+        if self.projects.iter().any(|project| project.id == id) {
+            self.project = id.to_string();
+        }
+    }
+
+    /// Flips `boot` in the project manifest and re-scans so the list reflects
+    /// what is actually on disk. Returns false (with `error` set) on failure.
+    pub fn toggle_project_boot(&mut self, id: &str) -> bool {
+        let Some(project) = self.projects.iter().find(|project| project.id == id) else {
+            return false;
+        };
+        let wanted = !project.boot;
+        match set_project_boot(id, wanted) {
+            Ok(path) => {
+                self.error = None;
+                self.note = Some(format!(
+                    "{} · 随开机启动 = {} · {}",
+                    project.name,
+                    if wanted { "是" } else { "否" },
+                    path.display()
+                ));
+                self.refresh_projects();
+                true
+            }
+            Err(why) => {
+                self.error = Some(why);
+                false
+            }
+        }
+    }
+
+    pub fn boot_projects(&self) -> usize {
+        self.projects.iter().filter(|project| project.boot).count()
+    }
+
+    pub fn ready_projects(&self) -> usize {
+        self.projects
+            .iter()
+            .filter(|project| project.readiness.is_ready())
+            .count()
     }
 
     /// The display layouts are stored against: the one picked on the Boot
@@ -935,6 +1020,304 @@ fn fit(ratios: &[f32], count: usize) -> Vec<f32> {
         vec![1.0 / count as f32; count]
     }
 }
+
+// ============================================================================
+// Projects — user-authored launch scripts
+// ============================================================================
+//
+// A project is a directory under `<config>/gnous/projects/` holding a
+// `project.toml` manifest plus the script it names. Nothing here executes a
+// script: the page only registers, reads and shows what is on disk, so an
+// absent or broken project stays visibly absent instead of looking launched.
+
+pub const PROJECT_MANIFEST: &str = "project.toml";
+pub const PROJECT_DEFAULT_SCRIPT: &str = "run.sh";
+
+/// How much of the script the page keeps in memory for the read-only preview.
+const BODY_LIMIT: usize = 400;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Readiness {
+    /// Manifest parsed, script exists and carries the executable bit.
+    Ready,
+    /// Script is there but `chmod +x` was never run.
+    NotExecutable,
+    /// Manifest names a script that is not on disk.
+    Missing,
+    /// `project.toml` is absent or not valid TOML.
+    Broken,
+}
+
+impl Readiness {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ready => "可执行",
+            Self::NotExecutable => "缺可执行位",
+            Self::Missing => "脚本不存在",
+            Self::Broken => "清单无法解析",
+        }
+    }
+
+    /// Rank used to sort the list: broken projects float to the top so they
+    /// cannot hide behind a healthy one.
+    pub fn rank(self) -> u8 {
+        match self {
+            Self::Broken => 0,
+            Self::Missing => 1,
+            Self::NotExecutable => 2,
+            Self::Ready => 3,
+        }
+    }
+
+    pub fn is_ready(self) -> bool {
+        matches!(self, Self::Ready)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Project {
+    /// Directory name; also the stable key the UI selects by.
+    pub id: String,
+    pub name: String,
+    pub summary: String,
+    pub script: String,
+    pub interpreter: String,
+    pub args: Vec<String>,
+    pub cwd: String,
+    pub boot: bool,
+    pub order: i64,
+    pub dir: PathBuf,
+    pub readiness: Readiness,
+    /// Why the manifest is unusable, verbatim from the parser.
+    pub problem: Option<String>,
+    pub lines: usize,
+    /// First `BODY_LIMIT` lines of the script, when it is readable text.
+    pub body: Option<String>,
+}
+
+impl Project {
+    pub fn path(&self) -> PathBuf {
+        self.dir.join(&self.script)
+    }
+
+    /// The command line the executor *would* run. Shown so the reader can see
+    /// exactly what is registered — it is not copied from the script.
+    pub fn command(&self) -> String {
+        let mut parts = vec![self.interpreter.clone(), self.path().display().to_string()];
+        for arg in &self.args {
+            if arg.contains(char::is_whitespace) {
+                parts.push(format!("\"{arg}\""));
+            } else {
+                parts.push(arg.clone());
+            }
+        }
+        parts.join(" ")
+    }
+
+    /// Working directory resolved against the project folder.
+    pub fn workdir(&self) -> PathBuf {
+        if self.cwd.is_empty() {
+            self.dir.clone()
+        } else {
+            self.dir.join(&self.cwd)
+        }
+    }
+}
+
+pub fn projects_root() -> PathBuf {
+    config_dir().join("projects")
+}
+
+fn manifest_str(table: &toml::value::Table, key: &str) -> Option<String> {
+    table
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+/// Reads one project directory. Never fails: a broken manifest becomes a
+/// `Broken` project carrying the parser message.
+fn read_project(id: String, dir: PathBuf) -> Project {
+    let manifest = dir.join(PROJECT_MANIFEST);
+    let mut problem = None;
+    let mut table = toml::value::Table::new();
+    match std::fs::read_to_string(&manifest) {
+        Ok(raw) => match raw.parse::<toml::Value>() {
+            Ok(toml::Value::Table(parsed)) => table = parsed,
+            Ok(_) => problem = Some("顶层不是 TOML 表".to_string()),
+            Err(why) => problem = Some(format!("TOML 解析失败：{why}")),
+        },
+        Err(why) if why.kind() == std::io::ErrorKind::NotFound => {
+            problem = Some(format!("缺少 {PROJECT_MANIFEST}"));
+        }
+        Err(why) => problem = Some(format!("读取失败：{why}")),
+    }
+
+    let script = manifest_str(&table, "script").unwrap_or_else(|| PROJECT_DEFAULT_SCRIPT.into());
+    let interpreter = manifest_str(&table, "interpreter").unwrap_or_else(|| "bash".into());
+    let args = table
+        .get("args")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(|value| value.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let path = dir.join(&script);
+
+    let (readiness, mut body, mut lines) = match std::fs::read_to_string(&path) {
+        Ok(raw) => {
+            let total = raw.lines().count();
+            let kept: Vec<&str> = raw.lines().take(BODY_LIMIT).collect();
+            let body = kept.join("\n");
+            (Readiness::Ready, Some(body), total)
+        }
+        Err(why) if why.kind() == std::io::ErrorKind::NotFound => (Readiness::Missing, None, 0),
+        Err(_) => {
+            // Present but not readable as text (binary, permissions).
+            (Readiness::NotExecutable, None, 0)
+        }
+    };
+    let readiness = if problem.is_some() {
+        Readiness::Broken
+    } else if readiness == Readiness::Ready && !is_executable(&path) {
+        Readiness::NotExecutable
+    } else {
+        readiness
+    };
+    if !readiness.is_ready() {
+        body = body.filter(|_| readiness == Readiness::NotExecutable);
+        if readiness != Readiness::NotExecutable {
+            lines = 0;
+        }
+    }
+
+    Project {
+        name: manifest_str(&table, "name").unwrap_or_else(|| id.clone()),
+        summary: manifest_str(&table, "summary").unwrap_or_default(),
+        interpreter,
+        args,
+        cwd: manifest_str(&table, "cwd").unwrap_or_default(),
+        boot: table
+            .get("boot")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false),
+        order: table
+            .get("order")
+            .and_then(|value| value.as_integer())
+            .unwrap_or(50),
+        dir,
+        script,
+        id,
+        readiness,
+        problem,
+        lines,
+        body,
+    }
+}
+
+#[cfg(unix)]
+fn is_executable(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|meta| meta.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable(_path: &std::path::Path) -> bool {
+    true
+}
+
+/// Scans every project directory. Directories that do not carry a manifest
+/// are still listed as `Broken` — a half-created project is a fact the user
+/// needs to see, not something to silently skip.
+pub fn scan_projects() -> (Vec<Project>, Option<String>) {
+    let root = projects_root();
+    let entries = match std::fs::read_dir(&root) {
+        Ok(entries) => entries,
+        Err(why) if why.kind() == std::io::ErrorKind::NotFound => {
+            return (Vec::new(), None);
+        }
+        Err(why) => {
+            return (
+                Vec::new(),
+                Some(format!("{} 读取失败：{why}", root.display())),
+            );
+        }
+    };
+
+    let mut projects = Vec::new();
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let id = entry.file_name().to_string_lossy().to_string();
+        if id.starts_with('.') {
+            continue;
+        }
+        projects.push(read_project(id, dir));
+    }
+    projects.sort_by(|a, b| {
+        a.order
+            .cmp(&b.order)
+            .then_with(|| a.readiness.rank().cmp(&b.readiness.rank()))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    (projects, None)
+}
+
+/// Flips `boot` in the project's own manifest, keeping every other line
+/// (comments included) untouched. Returns the manifest that was rewritten.
+pub fn set_project_boot(id: &str, boot: bool) -> Result<PathBuf, String> {
+    let dir = projects_root().join(id);
+    let manifest = dir.join(PROJECT_MANIFEST);
+    let raw = std::fs::read_to_string(&manifest)
+        .map_err(|why| format!("{} 读取失败：{why}", manifest.display()))?;
+    let wanted = format!("boot = {boot}");
+    let mut replaced = false;
+    let mut out: Vec<String> = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim_start();
+        let is_boot = trimmed
+            .strip_prefix("boot")
+            .map(|rest| rest.trim_start().starts_with('='))
+            .unwrap_or(false);
+        if is_boot && !replaced {
+            out.push(wanted.clone());
+            replaced = true;
+        } else if !is_boot {
+            out.push(line.to_string());
+        }
+    }
+    if !replaced {
+        out.push(wanted);
+    }
+    let mut text = out.join("\n");
+    if raw.ends_with('\n') {
+        text.push('\n');
+    }
+    std::fs::write(&manifest, text)
+        .map_err(|why| format!("{} 写入失败：{why}", manifest.display()))?;
+    Ok(manifest)
+}
+
+/// Starter manifest shown in the empty state. It is a literal, not a generated
+/// file: nothing is written until the user puts it there themselves.
+pub const PROJECT_TEMPLATE: &str = r#"# <config>/gnous/projects/<id>/project.toml
+name = "示例项目"
+summary = "登录后它要做什么，一句话"
+script = "run.sh"          # 相对本目录
+interpreter = "bash"
+args = []
+cwd = "."                  # 相对本目录，或绝对路径
+boot = false               # 随开机启动
+order = 10                 # 开机顺序，小的先跑
+"#;
 
 #[cfg(test)]
 mod tests {

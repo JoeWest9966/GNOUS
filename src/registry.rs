@@ -160,7 +160,7 @@ mod tests {
                 .iter()
                 .map(|v| v.id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["layouts", "boot", "journal"]
+            vec!["layouts", "boot", "journal", "projects"]
         );
         let shell = all.iter().find(|m| m.id == "openshell").expect("openshell");
         assert_eq!(
@@ -181,7 +181,7 @@ mod tests {
         assert_eq!(extensions.len(), 10);
         assert_eq!(extensions[0].1.id, "fixes");
         assert_eq!(extensions[1].1.id, "align");
-        assert_eq!(views_for("startup").len(), 3);
+        assert_eq!(views_for("startup").len(), 4);
         assert_eq!(extensions[2].1.id, "gateway");
         assert_eq!(extensions[9].1.id, "tooling");
     }
