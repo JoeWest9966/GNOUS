@@ -26,6 +26,15 @@ pub const INSET: f32 = 12.;
 #[derive(Clone)]
 pub struct DragLed;
 
+/// Which `Led` a scrubber drives. `Auto` follows the active page; the log
+/// drawer and the table body have explicitly tagged scrubbers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Target {
+    Auto,
+    Table,
+    Log,
+}
+
 impl Render for DragLed {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         Empty

@@ -9,6 +9,7 @@ mod root_align;
 mod scroll;
 mod startup;
 mod sys;
+mod table_prefs;
 mod table_state;
 mod theme;
 mod toggles;
@@ -112,7 +113,7 @@ pub(crate) struct ProcDialog {
 
 /// Owned snapshot of transient process-view UI passed to the plugin renderer.
 /// Owned (not borrowed) so overlay callbacks never capture `render`'s stack.
-pub(crate) struct ProcOverlays {
+pub(crate) struct ProcOverlays<'a> {
     pub(crate) dialog: Option<ProcDialog>,
     pub(crate) menu: Option<(u32, f32, f32)>,
     pub(crate) toast: Option<String>,
@@ -121,6 +122,12 @@ pub(crate) struct ProcOverlays {
     pub(crate) frozen: Option<u32>,
     pub(crate) viewport: (f32, f32),
     pub(crate) menu_name: String,
+    pub(crate) menu_watched: bool,
+    pub(crate) log_open: bool,
+    pub(crate) log: Vec<table_prefs::Entry>,
+    pub(crate) log_path: String,
+    pub(crate) log_led: &'a scroll::Led,
+    pub(crate) table_error: Option<String>,
 }
 
 pub(crate) struct App {
@@ -143,11 +150,17 @@ pub(crate) struct App {
     proc_toast: Option<String>,
     proc_toast_at: Option<Instant>,
     pub(crate) table: table_state::TableState,
-    /// Scroll state for the shared page scroller and for the table body. The
-    /// tick column and the keyboard both drive these, so a broken wheel is
-    /// never a dead end.
+    /// Persistent operation journal (`~/.config/gnous/table.json`).
+    table_log: Vec<table_prefs::Entry>,
+    table_error: Option<String>,
+    proc_log_open: bool,
+    /// When the next `/proc` sample is due; refresh rate is user-controlled.
+    next_proc_sample: Instant,
+    /// Scroll state for the shared page scroller, the table body and the log
+    /// drawer. The tick column and the keyboard drive whichever is active.
     pub(crate) content_led: scroll::Led,
     pub(crate) table_led: scroll::Led,
+    pub(crate) log_led: scroll::Led,
     /// uid 0 = root; "我的" 过滤以此为基准.
     my_uid: u32,
     /// One state entry per `fixes::FIXES` row, in the same order.
@@ -171,10 +184,12 @@ pub(crate) struct App {
     drag_anchor: Option<Point<gpui_kit::Pixels>>,
 }
 
-/// How often the overview re-samples the machine.
-const REFRESH: Duration = Duration::from_secs(1);
-/// Extensions change rarely; re-reading gsettings every tick would be waste.
-const EXTENSION_TICKS: u32 = 10;
+/// Scheduler granularity. A cheap timer; the actual `/proc` read only happens
+/// when the user-selected refresh interval has elapsed.
+const POLL: Duration = Duration::from_millis(100);
+/// Overview data still updates once a second; extensions every ten seconds.
+const SYS_TICKS: u32 = 10;
+const EXTENSION_TICKS: u32 = 100;
 
 impl App {
     fn new(cx: &mut Context<Self>) -> Self {
@@ -190,36 +205,62 @@ impl App {
         let _ = proc_sampler.sample();
         std::thread::sleep(Duration::from_millis(120));
         let proc = proc_sampler.sample();
+        let prefs = table_prefs::load();
+        let mut table = prefs.table;
+        let table_log = prefs.log;
+        // Seed change highlighting from the first real sample, so opening the
+        // page never paints every row as "new".
+        table.prime(&proc.processes);
+        let table_error = table_prefs::save(&table_prefs::Data {
+            table: table.clone(),
+            log: table_log.clone(),
+        })
+        .err();
         // Sampling runs on the UI thread: every probe is a procfs/sysfs read,
-        // so a tick costs microseconds and never races the render.
+        // so a tick costs microseconds and never races the render. The 100 ms
+        // scheduler only decides *when* to look; the user's refresh rate
+        // decides whether an actual sample is due.
         cx.spawn(async move |this, cx| {
             let mut ticks = 0u32;
             loop {
-                cx.background_executor().timer(REFRESH).await;
+                cx.background_executor().timer(POLL).await;
                 ticks = ticks.wrapping_add(1);
+                let sys_tick = ticks % SYS_TICKS == 0;
                 let rescan = ticks % EXTENSION_TICKS == 0;
                 let alive = this
                     .update(cx, |app, cx| {
-                        app.snap = app.probe.sample();
+                        let mut changed = false;
+                        if sys_tick {
+                            app.snap = app.probe.sample();
+                            changed = true;
+                        }
                         if app
                             .proc_toast_at
                             .is_some_and(|at| at.elapsed() > Duration::from_millis(2400))
                         {
                             app.proc_toast = None;
                             app.proc_toast_at = None;
+                            changed = true;
                         }
-                        if app.nav.page.plugin == "processes" && !app.table.paused {
-                            app.proc = app.proc_sampler.sample();
-                            app.cpu_history.push(app.proc.cpu_total);
-                            let excess = app.cpu_history.len().saturating_sub(30);
-                            app.cpu_history.drain(0..excess);
+                        if app.table.expire_highlights() {
+                            changed = true;
+                        }
+                        if app.nav.page.plugin == "processes"
+                            && !app.table.paused
+                            && Instant::now() >= app.next_proc_sample
+                        {
+                            app.sample_processes();
+                            changed = true;
                         }
                         if rescan {
                             app.provider.reload();
                             app.extensions = app.provider.list();
                             app.switches = app.toggles.read();
+                            changed = true;
                         }
-                        cx.notify();
+                        if changed {
+                            cx.notify();
+                        }
                     })
                     .is_ok();
                 if !alive {
@@ -243,9 +284,14 @@ impl App {
             proc_menu: None,
             proc_toast: None,
             proc_toast_at: None,
-            table: table_state::TableState::default(),
+            table,
+            table_log,
+            table_error,
+            proc_log_open: false,
+            next_proc_sample: Instant::now(),
             content_led: scroll::Led::new(),
             table_led: scroll::Led::new(),
+            log_led: scroll::Led::new(),
             my_uid: unsafe { libc::geteuid() },
             fixes: fixes::FIXES
                 .iter()
@@ -267,6 +313,49 @@ impl App {
             last_click: None,
             drag_anchor: None,
         }
+    }
+
+    /// One real `/proc` sample, plus the change detector and CPU history.
+    /// Called only when the selected refresh interval has elapsed.
+    fn sample_processes(&mut self) {
+        self.proc = self.proc_sampler.sample();
+        self.table.note_changes(&self.proc.processes);
+        self.push_cpu_history();
+        self.next_proc_sample = Instant::now() + self.table.refresh.duration();
+    }
+
+    /// Re-entry baseline: a real sample, but no change markers for the time
+    /// the process plugin was not being sampled.
+    fn reseed_processes(&mut self) {
+        self.proc = self.proc_sampler.sample();
+        self.table.prime(&self.proc.processes);
+        self.push_cpu_history();
+        self.next_proc_sample = Instant::now() + self.table.refresh.duration();
+    }
+
+    fn push_cpu_history(&mut self) {
+        self.cpu_history.push(self.proc.cpu_total);
+        let excess = self.cpu_history.len().saturating_sub(30);
+        self.cpu_history.drain(0..excess);
+    }
+
+    /// Persist preferences and the journal after every deliberate mutation.
+    fn persist_table(&mut self) {
+        let data = table_prefs::Data {
+            table: self.table.clone(),
+            log: self.table_log.clone(),
+        };
+        self.table_error = table_prefs::save(&data).err();
+    }
+
+    fn record(&mut self, kind: &str, detail: impl Into<String>, ok: bool) {
+        let entry = table_prefs::Entry::new(kind, detail, ok);
+        self.table_log.push(entry);
+        if self.table_log.len() > 200 {
+            let excess = self.table_log.len() - 200;
+            self.table_log.drain(0..excess);
+        }
+        self.persist_table();
     }
 
     /// Read the real `status` once when the diagnostic page is opened; the
@@ -368,6 +457,9 @@ impl App {
         self.fixes_apply_armed = false;
         self.root_align.armed = None;
         self.openshell.armed = None;
+        // Leaving the process plugin puts the change detector to sleep; coming
+        // back establishes a fresh baseline in `go_page`.
+        self.table.prime(&self.proc.processes);
         self.close_process_overlays();
         // Entering a plugin-owned section is the same event as switching to one
         // of its tabs, so the first probe has to fire here too: `pages()[0]` is
@@ -382,6 +474,7 @@ impl App {
     }
 
     fn go_page(&mut self, page: PageRef, cx: &mut Context<Self>) {
+        let was_processes = self.nav.page.plugin == "processes";
         self.nav.page = page;
         self.selected = None;
         self.error = None;
@@ -389,11 +482,10 @@ impl App {
         self.root_align.armed = None;
         self.openshell.armed = None;
         self.close_process_overlays();
-        if page.plugin == "processes" {
-            self.proc = self.proc_sampler.sample();
-            self.cpu_history.push(self.proc.cpu_total);
-            let excess = self.cpu_history.len().saturating_sub(30);
-            self.cpu_history.drain(0..excess);
+        if page.plugin == "processes" && !was_processes {
+            // Sampling stops while away from the plugin. Re-entering after a
+            // long gap is a new baseline, not hundreds of "changed" rows.
+            self.reseed_processes();
         }
         if page.plugin == "root-align" {
             self.enter_root_align_page(cx);
@@ -554,6 +646,7 @@ impl App {
     ) -> Result<(), String> {
         let result = proc::signal(pid, sig);
         self.proc = self.proc_sampler.sample();
+        self.table.note_changes(&self.proc.processes);
         cx.notify();
         result
     }
@@ -576,16 +669,27 @@ impl App {
         let Some(dialog) = self.proc_dialog.take() else {
             return;
         };
-        self.proc_toast = Some(
-            match self.signal_process(dialog.pid, dialog.action.signal(), cx) {
-                Ok(()) => format!(
-                    "已向 PID {} 发送 {}",
-                    dialog.pid,
-                    dialog.action.signal_label()
-                ),
-                Err(error) => format!("发送失败：{error}"),
-            },
+        let result = self.signal_process(dialog.pid, dialog.action.signal(), cx);
+        let ok = result.is_ok();
+        let detail = format!(
+            "{} · PID {} · {}{}",
+            dialog.action.signal_label(),
+            dialog.pid,
+            dialog.name,
+            match &result {
+                Err(error) => format!(" · {error}"),
+                Ok(()) => String::new(),
+            }
         );
+        self.record(dialog.action.signal_label(), detail, ok);
+        self.proc_toast = Some(match result {
+            Ok(()) => format!(
+                "已向 PID {} 发送 {}",
+                dialog.pid,
+                dialog.action.signal_label()
+            ),
+            Err(error) => format!("发送失败：{error}"),
+        });
         self.proc_toast_at = Some(Instant::now());
         cx.notify();
     }
@@ -613,6 +717,7 @@ impl App {
         self.proc_menu = None;
         self.proc_toast = None;
         self.proc_toast_at = None;
+        self.proc_log_open = false;
     }
 
     pub(crate) fn process_name(&self, pid: u32) -> String {
@@ -640,6 +745,29 @@ impl App {
         self.proc_toast = Some(format!("已复制{label}"));
         self.proc_toast_at = Some(Instant::now());
         self.proc_menu = None;
+        cx.notify();
+    }
+
+    /// Copy the whole visible journal as TSV and say how many lines went out.
+    pub(crate) fn copy_table_log(&mut self, cx: &mut Context<Self>) {
+        let text = std::iter::once("时间\t类型\t详情\t结果".to_string())
+            .chain(self.table_log.iter().rev().map(|entry| {
+                format!(
+                    "{}\t{}\t{}\t{}",
+                    entry.at,
+                    entry.kind,
+                    entry.detail.replace(['\t', '\n', '\r'], " "),
+                    if entry.ok { "成功" } else { "失败" }
+                )
+            }))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let count = self.table_log.len();
+        self.copy_text(text, &format!("操作日志（{count} 条）"), cx);
+    }
+
+    pub(crate) fn toggle_proc_log(&mut self, cx: &mut Context<Self>) {
+        self.proc_log_open = !self.proc_log_open;
         cx.notify();
     }
 
@@ -672,9 +800,9 @@ impl App {
         self.copy_text(text, "命令行", cx);
     }
 
-    /// Handle a keystroke while the Table view is visible. Plain characters
-    /// are search input; all actions use Ctrl so typing "pipewire" can never
-    /// accidentally arm SIGSTOP ("p") or copy ("c").
+    /// Handle a keystroke while the Table view is visible. Navigation keys
+    /// move the real selection; plain characters are search input; all actions
+    /// use Ctrl so typing "pipewire" can never arm SIGSTOP ("p").
     pub(crate) fn table_key(&mut self, key: &str, cx: &mut Context<Self>) {
         if self.proc_dialog.is_some() {
             match key {
@@ -688,39 +816,55 @@ impl App {
         // never go stale after a keyboard-driven state change.
         self.proc_menu = None;
         match key {
+            "down" => self.move_table_selection(1, cx),
+            "up" => self.move_table_selection(-1, cx),
+            "pagedown" => self.move_table_selection(10, cx),
+            "pageup" => self.move_table_selection(-10, cx),
+            "home" => self.jump_table_selection(false, cx),
+            "end" => self.jump_table_selection(true, cx),
+            "enter" => self.request_signal_selected(ProcAction::Terminate, cx),
+            "delete" => self.request_signal_selected(ProcAction::Kill, cx),
             "backspace" => self.table.backspace(),
             "escape" => {
-                self.table.clear_query();
-                self.proc_selected = None;
+                if self.proc_log_open {
+                    self.proc_log_open = false;
+                } else {
+                    self.table.clear_query();
+                    self.proc_selected = None;
+                }
             }
-            "ctrl-space" => self.table.paused = !self.table.paused,
+            "ctrl-space" => {
+                self.table.paused = !self.table.paused;
+                self.record(
+                    "PAUSE",
+                    if self.table.paused {
+                        "暂停刷新"
+                    } else {
+                        "继续刷新"
+                    },
+                    true,
+                );
+            }
             "ctrl-f" | "ctrl-F" => {
                 self.table.frozen_pid = if self.table.frozen_pid.is_some() {
                     None
                 } else {
                     self.proc_selected
-                }
+                };
+                self.record(
+                    "FREEZE",
+                    if self.table.frozen_pid.is_some() {
+                        "排序冻结"
+                    } else {
+                        "取消排序冻结"
+                    },
+                    true,
+                );
             }
-            "ctrl-k" => {
-                if let Some(pid) = self.proc_selected {
-                    self.request_signal(pid, ProcAction::Terminate, cx);
-                }
-            }
-            "ctrl-K" => {
-                if let Some(pid) = self.proc_selected {
-                    self.request_signal(pid, ProcAction::Kill, cx);
-                }
-            }
-            "ctrl-p" => {
-                if let Some(pid) = self.proc_selected {
-                    self.request_signal(pid, ProcAction::Stop, cx);
-                }
-            }
-            "ctrl-P" => {
-                if let Some(pid) = self.proc_selected {
-                    self.request_signal(pid, ProcAction::Continue, cx);
-                }
-            }
+            "ctrl-k" => self.request_signal_selected(ProcAction::Terminate, cx),
+            "ctrl-K" => self.request_signal_selected(ProcAction::Kill, cx),
+            "ctrl-p" => self.request_signal_selected(ProcAction::Stop, cx),
+            "ctrl-P" => self.request_signal_selected(ProcAction::Continue, cx),
             "ctrl-c" => {
                 if let Some(pid) = self.proc_selected {
                     self.copy_process_row(pid, cx);
@@ -731,9 +875,18 @@ impl App {
                     self.copy_process_command(pid, cx);
                 }
             }
-            "ctrl-1" => self.table.scope = table_state::Scope::All,
-            "ctrl-2" => self.table.scope = table_state::Scope::Mine,
-            "ctrl-3" => self.table.scope = table_state::Scope::System,
+            "ctrl-a" => self.set_table_scope(table_state::Scope::All, cx),
+            "ctrl-s" => self.set_table_scope(table_state::Scope::Mine, cx),
+            "ctrl-d" => self.set_table_scope(table_state::Scope::System, cx),
+            "ctrl-t" => self.cycle_table_state(cx),
+            "ctrl-h" => self.toggle_table_hot(cx),
+            "ctrl-w" => self.toggle_table_watch_selected(cx),
+            "ctrl-r" => self.cycle_table_refresh(cx),
+            "ctrl-g" => self.cycle_table_density(cx),
+            "ctrl-l" => self.toggle_proc_log(cx),
+            "ctrl-1" => self.set_table_scope(table_state::Scope::All, cx),
+            "ctrl-2" => self.set_table_scope(table_state::Scope::Mine, cx),
+            "ctrl-3" => self.set_table_scope(table_state::Scope::System, cx),
             ch if !ch.starts_with("ctrl-")
                 && ch.len() == 1
                 && !ch.chars().next().unwrap().is_control() =>
@@ -747,18 +900,63 @@ impl App {
         cx.notify();
     }
 
+    fn request_signal_selected(&mut self, action: ProcAction, cx: &mut Context<Self>) {
+        if let Some(pid) = self.proc_selected {
+            self.request_signal(pid, action, cx);
+        }
+    }
+
+    /// `7 · 键盘操作`: move within the *filtered, sorted, capped* rows, and
+    /// ask the table scroller to reveal the selected row.
+    fn move_table_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let pids = self.table.visible_pids(&self.proc.processes, self.my_uid);
+        if pids.is_empty() {
+            return;
+        }
+        let current = self
+            .proc_selected
+            .and_then(|pid| pids.iter().position(|candidate| *candidate == pid))
+            .unwrap_or(if delta > 0 { usize::MAX } else { 0 });
+        let index = (current as isize + delta).clamp(0, pids.len() as isize - 1) as usize;
+        self.proc_selected = Some(pids[index]);
+        self.table_led.handle().scroll_to_item(index);
+        cx.notify();
+    }
+
+    fn jump_table_selection(&mut self, end: bool, cx: &mut Context<Self>) {
+        let pids = self.table.visible_pids(&self.proc.processes, self.my_uid);
+        if pids.is_empty() {
+            return;
+        }
+        let index = if end { pids.len() - 1 } else { 0 };
+        self.proc_selected = Some(pids[index]);
+        self.table_led.handle().scroll_to_item(index);
+        cx.notify();
+    }
+
     pub(crate) fn sort_table(&mut self, key: table_state::SortKey, cx: &mut Context<Self>) {
         self.table.sort_by(key);
+        self.persist_table();
         cx.notify();
     }
 
     pub(crate) fn set_table_scope(&mut self, scope: table_state::Scope, cx: &mut Context<Self>) {
         self.table.scope = scope;
+        self.persist_table();
         cx.notify();
     }
 
     pub(crate) fn toggle_table_pause(&mut self, cx: &mut Context<Self>) {
         self.table.paused = !self.table.paused;
+        self.record(
+            "PAUSE",
+            if self.table.paused {
+                "暂停刷新"
+            } else {
+                "继续刷新"
+            },
+            true,
+        );
         cx.notify();
     }
 
@@ -768,6 +966,87 @@ impl App {
         } else {
             self.table.frozen_pid = self.proc_selected;
         }
+        cx.notify();
+    }
+
+    pub(crate) fn set_table_state(
+        &mut self,
+        filter: table_state::StateFilter,
+        cx: &mut Context<Self>,
+    ) {
+        self.table.set_state_filter(filter);
+        self.persist_table();
+        cx.notify();
+    }
+
+    pub(crate) fn cycle_table_state(&mut self, cx: &mut Context<Self>) {
+        self.table.cycle_state_filter();
+        self.persist_table();
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_table_hot(&mut self, cx: &mut Context<Self>) {
+        self.table.toggle_hot_only();
+        self.persist_table();
+        cx.notify();
+    }
+
+    pub(crate) fn cycle_table_hot(&mut self, cx: &mut Context<Self>) {
+        self.table.cycle_hot_cpu();
+        self.persist_table();
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_table_watched_only(&mut self, cx: &mut Context<Self>) {
+        self.table.toggle_watched_only();
+        self.persist_table();
+        cx.notify();
+    }
+
+    fn toggle_table_watch_selected(&mut self, cx: &mut Context<Self>) {
+        if let Some(pid) = self.proc_selected {
+            self.toggle_table_watch(pid, cx);
+        }
+    }
+
+    pub(crate) fn toggle_table_watch(&mut self, pid: u32, cx: &mut Context<Self>) {
+        let Some(process) = self.proc.processes.iter().find(|p| p.pid == pid).cloned() else {
+            return;
+        };
+        let watched = self.table.toggle_watch(&process);
+        self.record(
+            "WATCH",
+            format!(
+                "{} · PID {} · {}",
+                process.name,
+                pid,
+                if watched { "关注" } else { "取消关注" }
+            ),
+            true,
+        );
+        cx.notify();
+    }
+
+    pub(crate) fn cycle_table_refresh(&mut self, cx: &mut Context<Self>) {
+        self.table.cycle_refresh();
+        self.next_proc_sample = Instant::now() + self.table.refresh.duration();
+        self.record(
+            "REFRESH",
+            format!("{} 刷新", self.table.refresh.label()),
+            true,
+        );
+        cx.notify();
+    }
+
+    pub(crate) fn cycle_table_density(&mut self, cx: &mut Context<Self>) {
+        self.table.cycle_density();
+        self.persist_table();
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_table_highlights(&mut self, cx: &mut Context<Self>) {
+        self.table.toggle_highlights();
+        self.persist_table();
         cx.notify();
     }
 
@@ -993,6 +1272,16 @@ impl Render for App {
         let proc_selected = self.proc_selected;
         let paused = self.table.paused;
         let frozen = self.table.frozen_pid;
+        let log_open = self.proc_log_open;
+        let menu_watched = menu
+            .and_then(|(pid, _, _)| {
+                self.proc
+                    .processes
+                    .iter()
+                    .find(|process| process.pid == pid)
+                    .map(|process| self.table.is_watched(process))
+            })
+            .unwrap_or(false);
 
         h().relative()
             .size_full()
@@ -1034,7 +1323,8 @@ impl Render for App {
                     match key {
                         "space" => "ctrl-space".to_string(),
                         "1" | "2" | "3" => format!("ctrl-{key}"),
-                        _ => return,
+                        "delete" => return,
+                        _ => format!("ctrl-{key}"),
                     }
                 } else {
                     stroke
@@ -1073,6 +1363,7 @@ impl Render for App {
                             openshell: &self.openshell,
                             content_led: &self.content_led,
                             table_led: &self.table_led,
+                            table_error: self.table_error.as_deref(),
                         },
                         cx,
                     )),
@@ -1089,6 +1380,12 @@ impl Render for App {
                         frozen,
                         viewport,
                         menu_name,
+                        menu_watched,
+                        log_open,
+                        log: self.table_log.iter().rev().take(60).cloned().collect(),
+                        log_path: table_prefs::path().display().to_string(),
+                        table_error: self.table_error.clone(),
+                        log_led: &self.log_led,
                     },
                     &weak,
                 ))
@@ -1517,6 +1814,7 @@ pub(crate) struct Overview<'a> {
     pub(crate) openshell: &'a openshell::State,
     pub(crate) content_led: &'a scroll::Led,
     pub(crate) table_led: &'a scroll::Led,
+    pub(crate) table_error: Option<&'a str>,
 }
 
 fn content(overview: &Overview, cx: &mut Context<App>) -> impl IntoElement {
@@ -1553,7 +1851,13 @@ fn content(overview: &Overview, cx: &mut Context<App>) -> impl IntoElement {
                 .child(body),
         )
         .when(!table_view, |this| {
-            this.child(led_column("led-content", overview.content_led, 16., &weak))
+            this.child(led_column(
+                "led-content",
+                overview.content_led,
+                16.,
+                scroll::Target::Auto,
+                &weak,
+            ))
         })
 }
 
@@ -1575,6 +1879,7 @@ fn led_column(
     id: &'static str,
     led: &scroll::Led,
     right: f32,
+    target: scroll::Target,
     weak: &WeakEntity<App>,
 ) -> Stateful<Div> {
     let jump_weak = weak.clone();
@@ -1589,7 +1894,7 @@ fn led_column(
         .cursor(CursorStyle::ResizeUpDown)
         .hover(|this| this.bg(alpha(0xffffff08)))
         .on_mouse_down(MouseButton::Left, move |event, _, cx| {
-            let _ = jump_weak.update(cx, |app, cx| app.scrub_to(event.position.y, cx));
+            let _ = jump_weak.update(cx, |app, cx| app.scrub_to(event.position.y, target, cx));
         })
         .on_drag(scroll::DragLed, |_, _, _, cx| {
             cx.stop_propagation();
@@ -1600,7 +1905,7 @@ fn led_column(
             // exact even though the pointer is allowed to leave the column.
             let y = event.event.position.y;
             let bounds = event.bounds;
-            let _ = drag_weak.update(cx, |app, cx| app.scrub_at(y, bounds, cx));
+            let _ = drag_weak.update(cx, |app, cx| app.scrub_at(y, bounds, target, cx));
         });
     // Nothing to indicate when the content fits; the app re-renders every
     // second, so the column appears as soon as layout says it can scroll.
@@ -1616,17 +1921,18 @@ impl App {
     }
 
     /// The scroll area the indicator and the keyboard act on.
-    fn active_led(&mut self) -> &mut scroll::Led {
-        if self.on_table_view() {
-            &mut self.table_led
-        } else {
-            &mut self.content_led
+    fn active_led(&mut self, target: scroll::Target) -> &mut scroll::Led {
+        match target {
+            scroll::Target::Table => &mut self.table_led,
+            scroll::Target::Log => &mut self.log_led,
+            scroll::Target::Auto if self.on_table_view() => &mut self.table_led,
+            scroll::Target::Auto => &mut self.content_led,
         }
     }
 
     /// Press on the tick column: jump straight to the pointer.
-    fn scrub_to(&mut self, y: Pixels, cx: &mut Context<Self>) {
-        let led = self.active_led();
+    fn scrub_to(&mut self, y: Pixels, target: scroll::Target, cx: &mut Context<Self>) {
+        let led = self.active_led(target);
         let bounds = led.handle().bounds();
         let progress = led.progress_at(y, bounds);
         led.set_progress(progress);
@@ -1635,8 +1941,14 @@ impl App {
 
     /// Drag on the tick column: same mapping, but against the column's own
     /// bounds, which stay valid after the pointer leaves the strip.
-    fn scrub_at(&mut self, y: Pixels, bounds: Bounds<Pixels>, cx: &mut Context<Self>) {
-        let led = self.active_led();
+    fn scrub_at(
+        &mut self,
+        y: Pixels,
+        bounds: Bounds<Pixels>,
+        target: scroll::Target,
+        cx: &mut Context<Self>,
+    ) {
+        let led = self.active_led(target);
         let progress = led.progress_at(y, bounds);
         led.set_progress(progress);
         cx.notify();
@@ -1644,7 +1956,11 @@ impl App {
 
     /// Wheel-free movement. Returns whether `key` was consumed.
     fn scroll_key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
-        let led = self.active_led();
+        let led = self.active_led(if self.proc_log_open {
+            scroll::Target::Log
+        } else {
+            scroll::Target::Auto
+        });
         match key {
             "up" => led.scroll_by(-56.),
             "down" => led.scroll_by(56.),
@@ -1665,14 +1981,35 @@ impl App {
             self.table_key(key, cx);
             return;
         }
-        if matches!(key, "up" | "down" | "pageup" | "pagedown" | "home" | "end")
-            && self.proc_dialog.is_none()
-        {
-            self.scroll_key(key, cx);
+        if self.proc_log_open {
+            // The log drawer is modal for the Table: no hidden signal or
+            // filter shortcuts can fire behind its scrim.
+            match key {
+                "escape" | "ctrl-l" => self.toggle_proc_log(cx),
+                "up" | "down" | "pageup" | "pagedown" | "home" | "end" => {
+                    self.scroll_key(key, cx);
+                }
+                _ => {}
+            }
             return;
         }
         if self.on_table_view() {
-            self.table_key(key, cx);
+            if self.table.paused
+                && matches!(key, "up" | "down" | "pageup" | "pagedown" | "home" | "end")
+            {
+                // Pause freezes the numbers, not the viewport: navigation is
+                // still allowed but must only scroll, never move selection.
+                self.scroll_key(key, cx);
+            } else {
+                // On the Table, ↑/↓/PgUp/PgDn/Home/End move the real row
+                // selection; the scroller follows instead of being a separate
+                // cursor that the user has to keep in sync.
+                self.table_key(key, cx);
+            }
+            return;
+        }
+        if matches!(key, "up" | "down" | "pageup" | "pagedown" | "home" | "end") {
+            self.scroll_key(key, cx);
         }
     }
 }
