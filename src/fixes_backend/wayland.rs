@@ -231,11 +231,35 @@ pub struct Conn {
     protocol_error: Option<String>,
 }
 
+fn user_manager_env(key: &str) -> Result<String, String> {
+    let out = std::process::Command::new("systemctl")
+        .args(["--user", "show-environment"])
+        .env(
+            "XDG_RUNTIME_DIR",
+            std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/0".into()),
+        )
+        .output()
+        .map_err(|e| format!("systemctl --user show-environment 失败: {e}"))?;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|line| {
+            line.split_once('=')
+                .filter(|(k, _)| *k == key)
+                .map(|(_, v)| v.to_string())
+        })
+        .ok_or_else(|| format!("{key} 未设置"))
+}
+
 impl Conn {
     pub fn connect() -> Result<Conn, String> {
         let runtime =
             std::env::var("XDG_RUNTIME_DIR").map_err(|_| "XDG_RUNTIME_DIR 未设置".to_string())?;
-        let name = std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "wayland-0".into());
+        // GNOUS itself may run as an X11 client (GPUI), so the variable can be
+        // absent from this process; the session compositor is still the one to
+        // probe. Fall back to the systemd user manager environment.
+        let name = std::env::var("WAYLAND_DISPLAY")
+            .or_else(|_| user_manager_env("WAYLAND_DISPLAY"))
+            .unwrap_or_else(|_| "wayland-0".into());
         let path = if name.starts_with('/') {
             name
         } else {
