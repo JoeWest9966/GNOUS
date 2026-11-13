@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# 只在带 -c core.hooksPath 的提交里生效（不污染共享 .git/hooks，
+# 因为 /opt/GNOUS 与其它 worktree 共用同一个 hooks 目录）。
+set -uo pipefail
+root=$(git rev-parse --show-toplevel)
+exec bash "$root/extensions/proxy-tools/dev/check-safety.sh" --staged
