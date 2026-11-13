@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GNOUS · 表头吸顶是什么</title>
+<style>
+  :root{
+    --bg:#000000;--surface:#111113;--line:rgba(255,255,255,.09);
+    --line-strong:rgba(255,255,255,.18);--line-faint:rgba(255,255,255,.05);
+    --text:#F5F5F7;--muted:#86868B;--dim:#5A5A60;--accent:#E31937;--ok:#37D67A;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scrollbar-width:thin;scrollbar-color:#242424 transparent}
+  body{
+    background:var(--bg);color:var(--text);
+    font-family:"Helvetica Neue",Inter,"Segoe UI",system-ui,"Noto Sans SC",sans-serif;
+    -webkit-font-smoothing:antialiased;font-feature-settings:"tnum";
+    padding:36px 40px 60px;
+  }
+  .wrap{max-width:1360px;margin:0 auto}
+  .kicker{font-size:10.5px;letter-spacing:.3em;text-transform:uppercase;color:var(--dim);margin-bottom:12px}
+  h1{font-size:34px;font-weight:200;letter-spacing:-.02em}
+  .intro{color:var(--muted);font-size:13.5px;line-height:1.75;margin-top:14px;max-width:760px}
+  .intro b{color:var(--text);font-weight:400}
+  .hint{display:inline-flex;align-items:center;gap:8px;margin-top:20px;font-size:11px;color:var(--muted);border:1px solid var(--line);padding:7px 14px;border-radius:100px;letter-spacing:.04em}
+  .hint i{width:6px;height:6px;border-radius:50%;background:var(--accent);display:block}
+
+  .compare{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:34px}
+  .panel{border:1px solid var(--line);background:var(--bg);display:flex;flex-direction:column;min-width:0}
+  .panel > .hd{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+  .panel .hd h2{font-size:14px;font-weight:400;letter-spacing:.02em}
+  .panel .hd span{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim)}
+  .panel .hd .bad{color:var(--accent)}
+  .panel .hd .good{color:var(--ok)}
+
+  .stage{height:330px;overflow:hidden;position:relative}
+  .scroller{height:100%;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#333 transparent}
+  .scroller::-webkit-scrollbar{width:6px}
+  .scroller::-webkit-scrollbar-thumb{background:#2b2b2b}
+
+  .fake-nav{height:38px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:20px;padding:0 20px;color:var(--dim);font-size:10px;letter-spacing:.16em;text-transform:uppercase}
+  .fake-title{padding:18px 20px 12px;font-size:20px;font-weight:200}
+  .fake-sub{padding:0 20px 18px;font-size:11px;color:var(--muted)}
+
+  table{width:100%;border-collapse:collapse;font-size:11.5px}
+  th{
+    text-align:left;font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--dim);font-weight:500;padding:12px 12px;background:var(--bg);
+    border-bottom:1px solid var(--line);border-top:1px solid var(--line);white-space:nowrap;
+  }
+  th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
+  td{padding:11px 12px;border-bottom:1px solid var(--line-faint);color:var(--muted);white-space:nowrap}
+  td.name{color:var(--text)}
+  td.pid{color:var(--dim);font-size:10px}
+  .state{font-size:9px;letter-spacing:.16em;text-transform:uppercase}
+  .state.run{color:var(--ok)}
+  .state.wait{color:var(--accent)}
+  .spark{display:block}
+
+  /* 右侧：表头固定在滚动区顶部 */
+  .sticky th{position:sticky;top:0;z-index:2;background:#0B0B0C;box-shadow:0 1px 0 var(--line)}
+  .sticky .caption{position:sticky;top:35px;z-index:1}
+
+  .readout{margin-top:10px;padding:10px 20px 14px;display:flex;align-items:center;gap:10px;font-size:11px;color:var(--muted);border-top:1px solid var(--line)}
+  .readout b{color:var(--text);font-weight:400;font-variant-numeric:tabular-nums}
+  .readout .bar{flex:1;height:1px;background:var(--line-strong);position:relative}
+  .readout .bar i{position:absolute;left:0;top:0;height:3px;background:var(--accent);width:0;transition:width .08s linear}
+
+  .note{padding:14px 20px;border-top:1px solid var(--line);font-size:11.5px;color:var(--dim);line-height:1.65}
+  .note b{color:var(--muted);font-weight:400}
+
+  footer{margin-top:34px;border-top:1px solid var(--line);padding-top:20px;display:flex;justify-content:space-between;gap:18px;font-size:11.5px;color:var(--dim);line-height:1.7;flex-wrap:wrap}
+  footer b{color:var(--muted);font-weight:400}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">GNOUS · Table P0 · Sticky header</div>
+  <h1>表头吸顶是什么？</h1>
+  <p class="intro">
+    <b>表头吸顶</b>（sticky header）指：表格内容向下滚动时，写着「进程 / 状态 / CPU / 内存」的那一行
+    始终钉在可视区顶部，不跟着滚走。这样滚到第 80 行时，你仍然知道每个数字是哪一列；
+    不吸顶的话，滚过去以后表头就消失了，只剩一串没有标签的数字。
+    两侧都可以滚动，请<b>分别向下滚动</b>对比。
+  </p>
+  <div class="hint"><i></i>左右两个框独立滚动 · 建议滚到中段再看表头</div>
+
+  <div class="compare">
+    <div class="panel">
+      <div class="hd"><h2>现状 · 不吸顶</h2><span class="bad">表头会滚走</span></div>
+      <div class="stage">
+        <div class="scroller" id="left">
+          <div class="fake-nav"><span>GNOUS</span><span>Overview</span><span>Table</span><span>Live</span></div>
+          <div class="fake-title">进程</div>
+          <div class="fake-sub">312 个进程 · 按 CPU 降序</div>
+          <table><thead><tr><th>进程</th><th>状态</th><th class="num">CPU</th><th class="num">内存</th><th>趋势</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+      <div class="readout"><span>滚动位置</span><b id="left-pos">0</b><span>px</span><div class="bar"><i id="left-bar"></i></div><span id="left-state">表头可见</span></div>
+      <div class="note"><b>问题：</b>滚过表头后，列的语义丢失；想改排序也得先滚回顶部。</div>
+    </div>
+
+    <div class="panel">
+      <div class="hd"><h2>吸顶 · sticky</h2><span class="good">表头一直可见</span></div>
+      <div class="stage">
+        <div class="scroller sticky" id="right">
+          <div class="fake-nav"><span>GNOUS</span><span>Overview</span><span>Table</span><span>Live</span></div>
+          <div class="fake-title">进程</div>
+          <div class="fake-sub">312 个进程 · 按 CPU 降序</div>
+          <table><thead><tr><th>进程</th><th>状态</th><th class="num">CPU</th><th class="num">内存</th><th>趋势</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+      <div class="readout"><span>滚动位置</span><b id="right-pos">0</b><span>px</span><div class="bar"><i id="right-bar"></i></div><span id="right-state">表头可见</span></div>
+      <div class="note"><b>好处：</b>滚到任何位置都能对上列、随时点表头改排序；代价是表格要有自己的内部滚动区（现在 GNOUS 是整页滚动）。</div>
+    </div>
+  </div>
+
+  <footer>
+    <span><b>GNOUS 现状：</b><code>content()</code> 是一个整页滚动容器，Table 的表头只是普通的一行，所以会跟着滚走。</span>
+    <span><b>改造代价：</b>把 Table 拆成「固定表头 + 自己滚动的表体」，不动另外 4 个视图。</span>
+  </footer>
+</div>
+
+<script>
+const NAMES = [
+  "gnome-shell","firefox","code","Xwayland","pipewire","gnome-terminal","btrfs-scrub",
+  "tracker-miner-fs","systemd-journald","NetworkManager","dconf-service","gsd-xsettings",
+  "ibus-daemon","gnome-software","evolution-source-registry","gvfsd","at-spi2-registryd",
+  "dbus-daemon","systemd","kthreadd","ksoftirqd/0","migration/0","rcu_gp","watchdogd",
+  "zswap-shrink","khugepaged","kswapd0","ext4-rsv-conver","nvidia-modeset","bluetoothd"
+];
+const STATES = [["RUNNING","run"],["SLEEP",""],["SLEEP",""],["IO WAIT","wait"],["IDLE",""]];
+
+function spark(seed){
+  const w=64,h=14,pts=[];
+  for(let i=0;i<12;i++) pts.push(2 + Math.abs(Math.sin(seed*.7+i*.6))*9);
+  const d = pts.map((v,i)=>`${(i*w/11).toFixed(1)},${(h-v).toFixed(1)}`).join(" ");
+  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline points="${d}" fill="none" stroke="rgba(255,255,255,.6)" stroke-width="1"/></svg>`;
+}
+
+function rows(){
+  let html="";
+  for(let n=0;n<3;n++){
+    for(let i=0;i<NAMES.length;i++){
+      const idx=n*NAMES.length+i;
+      const [label,cls]=STATES[idx%STATES.length];
+      const cpu=(12.4/(1+idx*.14)).toFixed(1);
+      const mem=idx%7===0 ? (1.8/(1+idx*.1)).toFixed(1)+" GB" : Math.max(8,Math.round(940/(1+idx*.2)))+" MB";
+      html += `<tr>
+        <td class="name">${NAMES[i]} <span class="pid">PID ${1000+idx*7}</span></td>
+        <td><span class="state ${cls}">${label}</span></td>
+        <td class="num">${cpu}%</td>
+        <td class="num">${mem}</td>
+        <td>${spark(idx)}</td>
+      </tr>`;
+    }
+  }
+  return html;
+}
+document.querySelectorAll("tbody").forEach(tb => tb.innerHTML = rows());
+
+function bind(id, posId, barId, stateId, sticky){
+  const el = document.getElementById(id);
+  el.addEventListener("scroll", () => {
+    const p = Math.round(el.scrollTop);
+    document.getElementById(posId).textContent = p;
+    document.getElementById(barId).style.width =
+      Math.min(100, p/(el.scrollHeight-el.clientHeight)*100).toFixed(1)+"%";
+    document.getElementById(stateId).textContent =
+      sticky ? "表头仍然钉在顶部" : (p > 190 ? "表头已滚出视野 ✕" : "表头可见");
+    document.getElementById(stateId).style.color =
+      sticky ? "var(--ok)" : (p > 190 ? "var(--accent)" : "var(--muted)");
+  });
+}
+bind("left","left-pos","left-bar","left-state",false);
+bind("right","right-pos","right-bar","right-state",true);
+</script>
+</body>
+</html>

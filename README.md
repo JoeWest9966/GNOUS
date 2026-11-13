@@ -33,6 +33,10 @@
 - 进程页已按 `docs/EXTENSIONS.md` 做成第一个页面级扩展：`extensions/processes/manifest.toml`
   声明 5 个视图（Table / Live / Memory / Tree / Groups），顶栏 tab 由 registry 生成，五种视图共用
   同一份 `/proc` 采样，支持点击选中与两步确认结束进程。
+- Table 页 P0：表头排序、直接输入搜索（名称 / PID / 用户）、全部/我的/系统范围过滤、
+  暂停刷新、排序冻结、选中行详情栏（含长命令行）、SIGTERM 与 SIGKILL 两步确认、
+  表头吸顶（表体独立滚动）；键盘 `1/2/3` 切范围、空格暂停、`F` 冻结、`k` 结束、
+  `K` 强杀、`Esc` 清空。
 
 其余区块（启动器）仍是静态占位。
 
@@ -54,6 +58,7 @@ src/
 ├── ext.rs     # 扩展清单：Provider 抽象 + 文件/gsettings 默认后端
 ├── registry.rs # 编译期插件注册表：解析 extensions/*/manifest.toml，生成顶栏页面
 ├── proc.rs    # 进程采样：/proc/<pid>/stat + status，CPU 差分、用户名、cgroup
+├── table_state.rs # Table 视图的排序 / 搜索 / 范围 / 暂停 / 冻结状态
 ├── pages/     # 页面级扩展的渲染器（pages/processes.rs = 五种视图）
 ├── toggles.rs # 右侧快捷开关：gsettings bool/choice 与外部命令，缺失即置灰
 ├── theme.rs   # 设计 token（颜色 / 字体 / 字距 / 行高）与文本辅助函数
