@@ -369,6 +369,15 @@ impl App {
         self.root_align.armed = None;
         self.openshell.armed = None;
         self.close_process_overlays();
+        // Entering a plugin-owned section is the same event as switching to one
+        // of its tabs, so the first probe has to fire here too: `pages()[0]` is
+        // the plugin's own view and nothing else would read the gateway.
+        if page.plugin == "root-align" {
+            self.enter_root_align_page(cx);
+        }
+        if page.plugin == "openshell" {
+            self.enter_openshell_page(cx);
+        }
         cx.notify();
     }
 
@@ -1040,6 +1049,10 @@ impl Render for App {
 enum Section {
     Overview,
     Extensions,
+    /// The OpenShell sandbox console. A page-level extension owns this whole
+    /// section, so its eight views get the top bar to themselves instead of
+    /// crowding in behind Fixes and Align.
+    Openshell,
     Appearance,
     Devices,
     Startup,
@@ -1050,6 +1063,7 @@ impl Section {
     const ALL: &'static [Section] = &[
         Section::Overview,
         Section::Extensions,
+        Section::Openshell,
         Section::Appearance,
         Section::Devices,
         Section::Startup,
@@ -1060,10 +1074,11 @@ impl Section {
         match self {
             Section::Overview => 0,
             Section::Extensions => 1,
-            Section::Appearance => 2,
-            Section::Devices => 3,
-            Section::Startup => 4,
-            Section::Power => 5,
+            Section::Openshell => 2,
+            Section::Appearance => 3,
+            Section::Devices => 4,
+            Section::Startup => 5,
+            Section::Power => 6,
         }
     }
 
@@ -1071,6 +1086,7 @@ impl Section {
         match self {
             Section::Overview => icons::GRID,
             Section::Extensions => icons::PUZZLE,
+            Section::Openshell => icons::BOX,
             Section::Appearance => icons::SUN,
             Section::Devices => icons::MONITOR,
             Section::Startup => icons::STARTUP,
@@ -1083,6 +1099,7 @@ impl Section {
         match self {
             Section::Overview => "overview",
             Section::Extensions => "extensions",
+            Section::Openshell => "openshell",
             Section::Appearance => "appearance",
             Section::Devices => "devices",
             Section::Startup => "startup",
@@ -1096,6 +1113,7 @@ impl Section {
         let core = match self {
             Section::Overview => vec![PageRef::OVERVIEW],
             Section::Extensions => vec![PageRef::INSTALLED],
+            Section::Openshell => Vec::new(),
             Section::Appearance => vec![PageRef::APPEARANCE],
             Section::Devices => vec![PageRef::DEVICES],
             Section::Startup => Vec::new(),

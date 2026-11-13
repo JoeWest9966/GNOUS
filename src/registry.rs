@@ -165,7 +165,7 @@ mod tests {
         let shell = all.iter().find(|m| m.id == "openshell").expect("openshell");
         assert_eq!(
             shell.nav.as_ref().map(|n| n.section.as_str()),
-            Some("extensions")
+            Some("openshell")
         );
         assert_eq!(shell.views.len(), 8);
         assert_eq!(shell.views[0].id, "gateway");
@@ -178,11 +178,15 @@ mod tests {
         assert_eq!(overview.len(), 5);
         assert!(views_for("appearance").is_empty());
         let extensions = views_for("extensions");
-        assert_eq!(extensions.len(), 10);
+        assert_eq!(extensions.len(), 2);
         assert_eq!(extensions[0].1.id, "fixes");
         assert_eq!(extensions[1].1.id, "align");
         assert_eq!(views_for("startup").len(), 3);
-        assert_eq!(extensions[2].1.id, "gateway");
-        assert_eq!(extensions[9].1.id, "tooling");
+        // The sandbox console owns its own rail section, so its eight views are
+        // no longer counted against Extensions.
+        let shell = views_for("openshell");
+        assert_eq!(shell.len(), 8);
+        assert_eq!(shell[0].1.id, "gateway");
+        assert_eq!(shell[7].1.id, "tooling");
     }
 }

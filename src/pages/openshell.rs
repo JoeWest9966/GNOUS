@@ -174,9 +174,21 @@ fn metrics(state: &State) -> Div {
         ),
         (
             "命令失败",
-            health.failures.to_string(),
-            "条".into(),
-            if health.failures > 0 { accent() } else { ok() },
+            if state.checked {
+                health.failures.to_string()
+            } else {
+                "—".to_string()
+            },
+            if state.checked {
+                "条".into()
+            } else {
+                String::new()
+            },
+            if state.checked && health.failures > 0 {
+                accent()
+            } else {
+                muted()
+            },
         ),
     ];
     let mut row = h()
@@ -280,16 +292,16 @@ fn footer(state: &State) -> Div {
         .border_t(px(1.))
         .border_color(line())
         .child(txt(
-            format!(
-                "刷新于 {} · 失败 {} 条 · 动作记录 {} 条",
-                if state.snap.probed_at.is_empty() {
-                    "—"
-                } else {
-                    &state.snap.probed_at
-                },
-                health.failures,
-                state.log.len()
-            ),
+            if state.checked {
+                format!(
+                    "刷新于 {} · 失败 {} 条 · 动作记录 {} 条",
+                    state.snap.probed_at,
+                    health.failures,
+                    state.log.len()
+                )
+            } else {
+                "尚未探测：进入分区或点 REFRESH 才会读网关".to_string()
+            },
             11.,
             FontWeight::NORMAL,
             dim(),
