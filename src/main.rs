@@ -1,5 +1,6 @@
 mod ext;
 mod fixes;
+pub mod fixes_backend;
 mod icons;
 mod openshell;
 mod pages;
@@ -2460,6 +2461,15 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args
+        .first()
+        .is_some_and(|arg| arg == "--builtin-clipfix-holder")
+    {
+        let token = args.get(1).map(String::as_str).unwrap_or_default();
+        let hold_ms = args.get(2).and_then(|raw| raw.parse().ok()).unwrap_or(6000);
+        fixes_backend::clipfix::holder(token, hold_ms);
+        return;
+    }
     if args.iter().any(|arg| arg == "--version" || arg == "-V") {
         println!("gnous {VERSION}");
         return;

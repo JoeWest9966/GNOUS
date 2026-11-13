@@ -90,8 +90,8 @@ default = true
 | 扩展 | 层级 | 入口 |
 | --- | --- | --- |
 | `processes` | 页面级 | Overview 分区下的 5 个视图：Table / Live / Memory / Tree / Groups |
-| `gnome-fixes` | 页面级 | Extensions 分区下的 Fixes：把 `/home/root/GNOME/` 的 5 个小补丁收成一处，统一「体检 / 应用 / 回退」，状态来自外部工具的真实输出 |
-| `root-align` | 页面级 | Extensions 分区下的 Align：C 方案诊断台，8 个 systemd 用户单元按功能域分组，`status` / `doctor` / 动作 stdout 原样展示；复用 `GNOUS_FIXES_ROOT` |
+| `gnome-fixes` | 页面级 | Extensions 分区下的 Fixes：5 个小补丁统一「体检 / 应用 / 回退」；`clipfix` / `rootdesk` 由共用内建后端提供结构化状态，另外 3 项仍走外部工具 |
+| `root-align` | 页面级 | Extensions 分区下的 Align：C 方案诊断台，8 个 systemd 用户单元按功能域分组；`status` / `doctor` / 动作 stdout 原样展示，健康结论来自内建 facts |
 | `startup-layouts` | 页面级 | 左列独立分区 Startup，三个视图 Layouts / Boot / Journal：勾选开机铺开的页面、按比例排列窗口、配置启动策略 |
 | `openshell` | 页面级 | Extensions 分区下的 OpenShell：8 个视图 / 45 个区块，全部读 `openshell` CLI 的真实 stdout（网关、沙箱、执行、转发、策略、凭据、日志、工具），失败原样展示 |
 
@@ -99,8 +99,10 @@ default = true
 每次改动立即写盘；「预演一遍」只做可证明的事——把每个启动命令拿到 `PATH` 里解析，找不到就显示找不到。
 真正开窗的执行器尚未实现，所以「上次启动」「启动日志」保持空态，不填演示数据。
 
-`GNOUS_FIXES_ROOT` 可覆盖工具根目录（默认 `/home/root/GNOME`）；工具缺失时显示失败原因，不伪造状态。
-带副作用的外部命令一律二次确认，危险 flags（`--now` / `--restart` / `--run --yes`）不从 UI 触发。
+`src/fixes_backend/` 是内建补丁的共用深模块：`run(tool, op)` 返回 `Outcome { ok, output, facts }`，
+状态写在 `~/.local/state/gnous/fixes/*.json`，每次动作追加 `audit.jsonl`；`GNOUS_STATE_HOME` 可覆盖（测试隔离）。
+`GNOUS_FIXES_ROOT` 只用于尚未迁移的 3 个外部工具（默认 `/home/root/GNOME`）；工具缺失时显示失败原因，不伪造状态。
+带副作用的动作一律二次确认，危险 flags（`--now` / `--restart` / `--run --yes`）不从 UI 触发。
 `root-align` 的 `restart-shell` 会打断 GNOME 会话，放在独立危险区且二次确认；`apply / revert` 成功后自动重跑只读 `status`，并把动作 stdout 留在 `APPLY LOG`。
 
 新增页面级扩展的完整链路：`extensions/<id>/manifest.toml` → `MANIFESTS` 登记 →

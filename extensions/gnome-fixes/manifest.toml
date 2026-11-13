@@ -1,6 +1,6 @@
 id = "gnome-fixes"
 name = "系统修复"
-summary = "把零散的 GNOME 桌面小补丁收在一处，每项都走体检 / 应用 / 回退"
+summary = "把 GNOME 桌面小补丁收在一处；两个共用内建 Rust 后端，三项仍接外部工具"
 version = "0.1.0"
 capabilities = ["page"]
 icon = "wrench"

@@ -10,7 +10,7 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled, WeakEntity, div, px,
 };
 
-use crate::root_align::{self, Action, DOMAINS, STATE_FILE, Status, Tab, UNITS, Unit};
+use crate::root_align::{self, Action, BUILTIN_STATE_FILE, DOMAINS, Status, Tab, UNITS, Unit};
 use crate::theme::{
     accent, accent_hover, alpha, black, caps, dim, h, line, line_strong, muted, ok, surface_2,
     text, txt, v, warn,
@@ -27,7 +27,7 @@ pub fn body(overview: &Overview, weak: &WeakEntity<App>) -> Div {
                 .mb(px(20.))
                 .child(caps("诊断台", 12., FontWeight::MEDIUM, muted(), 0.24))
                 .child(caps(
-                    "外部命令 stdout · 未格式化 · 未裁剪",
+                    "内建后端 stdout · 未格式化 · 未裁剪",
                     11.,
                     FontWeight::NORMAL,
                     dim(),
@@ -101,7 +101,7 @@ fn hero(overview: &Overview, weak: &WeakEntity<App>) -> Div {
                         )
                         .child(
                             txt(
-                                "诊断台：左侧按功能域列出受影响能力，右侧原样展示外部工具 stdout；状态、doctor 日志、动作输出互不遮掩。",
+                                "诊断台：左侧按功能域列出受影响能力，右侧原样展示内建后端 stdout；状态、doctor 日志、动作输出互不遮掩。",
                                 13.,
                                 FontWeight::NORMAL,
                                 muted(),
@@ -154,7 +154,7 @@ fn button(
 
 fn metrics(overview: &Overview) -> Div {
     let state = overview.root_align;
-    let unit_count = state.units.len();
+    let healthy_count = state.units.iter().filter(|unit| unit.healthy).count();
     let values = [
         (
             "对齐结论",
@@ -164,8 +164,8 @@ fn metrics(overview: &Overview) -> Div {
         ),
         (
             "覆盖 / 活动",
-            unit_count.to_string(),
-            format!("/ {unit_count}"),
+            healthy_count.to_string(),
+            format!("/ {}", UNITS.len()),
             text(),
         ),
         ("系统文件改动", "00".to_string(), "处".to_string(), text()),
@@ -396,13 +396,13 @@ fn verbatim_output(outcome: Option<&root_align::Outcome>, busy: bool) -> Div {
         panel = panel.child(
             div()
                 .text_color(warn())
-                .child("执行中… 等待外部工具返回 stdout"),
+                .child("执行中… 等待内建后端返回结构化结果"),
         );
     } else {
         panel = panel.child(
             div()
                 .text_color(dim())
-                .child("点「STATUS」或「DOCTOR」读取外部工具的真实输出"),
+                .child("点「STATUS」或「DOCTOR」读取 GNOUS 内建后端的真实状态"),
         );
     }
     panel
@@ -464,15 +464,15 @@ fn pill(label: &str, color: Hsla) -> Div {
 fn fields(overview: &Overview, weak: &WeakEntity<App>) -> Div {
     let state = overview.root_align;
     v().child(field(
-        "工具目录",
-        &root_align::tool_dir().to_string_lossy(),
-        "GNOUS_FIXES_ROOT 覆盖",
+        "后端目录",
+        &root_align::fixes_backend::backend_dir().to_string_lossy(),
+        "GNOUS_STATE_HOME 覆盖",
         false,
         None,
     ))
     .child(field(
         "状态文件",
-        &format!("{STATE_FILE} · 记录 apply 写过的覆盖，供 revert 精确回滚"),
+        &format!("{BUILTIN_STATE_FILE} · JSON 记录 apply 写过的覆盖，供 revert 精确回滚"),
         "只读展示",
         false,
         None,
@@ -566,14 +566,14 @@ fn footer() -> Div {
         .pt(px(24.))
         .child(
             txt(
-                "所有绿字都来自外部命令 stdout；工具缺失、命令失败或输出无法解析时显示 UNKNOWN / FAILED 与原因。不写系统文件，不 enable/disable 全局单元，joe 会话不受影响。",
+                "绿字来自 GNOUS 内建后端的结构化事实；命令失败或事实无法解析时显示 UNKNOWN / FAILED 与原因。只在 root 的 ~/.config/systemd/user 写覆盖，不改 /usr/lib，不 enable/disable 全局单元，joe 会话不受影响。",
                 12.,
                 FontWeight::NORMAL,
                 dim(),
             )
             .line_height(px(22.)),
         )
-        .child(pill("STATUS · 真实输出", ok()))
+        .child(pill("STATUS · 内建真实状态", ok()))
 }
 
 /// Used by `App` to keep the page viewport stable while stdout is long.

@@ -2,7 +2,8 @@
 //!
 //! Mirrors `demo/gnome-fixes/index.html`: metric strip, five expandable rows,
 //! evidence matrix + real command output on the left, explanation + command on
-//! the right. All actions run the external tool through `crate::fixes`.
+//! the right. Built-in rows use `crate::fixes_backend`; the remaining rows
+//! still run their external tools through `crate::fixes`.
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -68,7 +69,7 @@ fn hero(overview: &Overview, weak: &WeakEntity<App>) -> Div {
                         )
                         .child(
                             txt(
-                                "把零散的小补丁收成一处：每项都走体检 → 应用 → 回退，随时可逆。",
+                                "把零散的小补丁收成一处：每项都走体检 → 应用 → 回退；剪贴板与 root 桌面对齐已内建，随时可逆。",
                                 13.,
                                 FontWeight::NORMAL,
                                 muted(),
@@ -430,7 +431,7 @@ fn footer() -> Div {
         .pt(px(24.))
         .child(
             txt(
-                "这些都不是「根治」：每项只是把受影响的程序绕到没坏的通道，或补齐缺失的启动项。所有改动不写系统文件，随时可回退；涉及会话的改动会标注「需重登」。",
+                "这些都不是「根治」：每项只是把受影响的程序绕到没坏的通道，或补齐缺失的启动项。内建后端用 JSON 状态与审计日志保证可回退；涉及会话的改动不会自动触发。",
                 12.,
                 FontWeight::NORMAL,
                 dim(),
@@ -444,10 +445,10 @@ fn footer() -> Div {
                 .px(px(10.))
                 .py(px(5.))
                 .child(caps(
-                    "5 项 · 0 项写系统文件",
+                    "5 项 · 2 项内建后端",
                     10.,
                     FontWeight::NORMAL,
-                    warn(),
+                    ok(),
                     0.1,
                 )),
         )

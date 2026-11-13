@@ -1,26 +1,36 @@
-//! `root-align`: a page-level extension around `Root用户桌面功能对齐`.
+//! `root-align`: a page-level diagnostic console over the built-in backend.
 //!
-//! The UI is an honest console: `status` / `doctor` / `apply` / `revert` are
-//! real invocations of the upstream `root-gnome-align.sh`, and every stdout is
-//! kept verbatim. Nothing is inferred when the tool is missing or its output
-//! cannot be parsed. `restart-shell` is a separate, two-step action.
-//!
-//! Manifest: `extensions/root-align/manifest.toml`.
+//! `Action` / `Tab` / `State` are the external seam used by `App` and the
+//! renderer. The backend returns structured facts; this module adapts them to
+//! the existing UI types without parsing human stdout for health. `output`
+//! remains the verbatim, human-readable result shown in the console.
 
-use std::path::PathBuf;
-use std::process::Command;
+use serde_json::Value;
 
-use crate::{fixes, sys};
+pub use crate::fixes_backend;
+use crate::sys;
 
-pub const TOOL_DIR: &str = "Root用户桌面功能对齐";
-pub const SCRIPT: &str = "root-gnome-align.sh";
-pub const STATE_FILE: &str = "/root/.config/root-gnome-align/state.json";
-
-/// The toolkit shares `GNOUS_FIXES_ROOT` with `gnome-fixes`; both live under
-/// the same `/home/root/GNOME` directory by default.
-pub fn tool_dir() -> PathBuf {
-    fixes::root().join(TOOL_DIR)
-}
+pub const BUILTIN_STATE_FILE: &str = "~/.local/state/gnous/fixes/root-align.json";
+pub use fixes_backend::root_align::Unit;
+pub const UNITS: &[Unit] = fixes_backend::root_align::UNITS;
+pub const DOMAINS: &[Domain] = &[
+    Domain {
+        name: "音频",
+        description: "音量条、声音面板、系统提示音、录音 / 通话。",
+    },
+    Domain {
+        name: "设备枚举 / 路由",
+        description: "输出设备、音量路由、滤波器链。",
+    },
+    Domain {
+        name: "媒体控制 / 蓝牙",
+        description: "媒体键、GNOME 指示器、耳机播放控制。",
+    },
+    Domain {
+        name: "全局搜索",
+        description: "GNOME 概览检索本地文档内容。",
+    },
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -40,6 +50,9 @@ impl Action {
         Action::RestartShell,
     ];
 
+    /// Stable operation names; tests assert that no shell flags can enter
+    /// the backend through this interface.
+    #[cfg(test)]
     pub fn arg(self) -> &'static str {
         match self {
             Action::Status => "status",
@@ -99,6 +112,7 @@ pub struct Outcome {
     pub ok: bool,
     pub output: String,
     pub command: String,
+    pub facts: Value,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -130,80 +144,10 @@ pub struct UnitState {
     pub healthy: bool,
 }
 
-pub struct Unit {
-    pub name: &'static str,
-    pub description: &'static str,
-    pub domain: usize,
-}
-
 pub struct Domain {
     pub name: &'static str,
     pub description: &'static str,
 }
-
-pub const DOMAINS: &[Domain] = &[
-    Domain {
-        name: "音频",
-        description: "音量条、声音面板、系统提示音、录音 / 通话。",
-    },
-    Domain {
-        name: "设备枚举 / 路由",
-        description: "输出设备、音量路由、滤波器链。",
-    },
-    Domain {
-        name: "媒体控制 / 蓝牙",
-        description: "媒体键、GNOME 指示器、耳机播放控制。",
-    },
-    Domain {
-        name: "全局搜索",
-        description: "GNOME 概览检索本地文档内容。",
-    },
-];
-
-/// The same eight units `root-gnome-align.sh status` reports, grouped by the
-/// functional domains shown in the left column of the console.
-pub const UNITS: &[Unit] = &[
-    Unit {
-        name: "pipewire.service",
-        description: "PipeWire 媒体核心",
-        domain: 0,
-    },
-    Unit {
-        name: "pipewire.socket",
-        description: "控制 / 管理套接字",
-        domain: 0,
-    },
-    Unit {
-        name: "pipewire-pulse.service",
-        description: "PulseAudio 兼容层",
-        domain: 0,
-    },
-    Unit {
-        name: "pipewire-pulse.socket",
-        description: "PulseAudio 兼容套接字",
-        domain: 0,
-    },
-    Unit {
-        name: "wireplumber.service",
-        description: "设备枚举 / 音量路由",
-        domain: 1,
-    },
-    Unit {
-        name: "filter-chain.service",
-        description: "PipeWire 滤波器链",
-        domain: 1,
-    },
-    Unit {
-        name: "mpris-proxy.service",
-        description: "蓝牙 MPRIS 媒体代理",
-        domain: 2,
-    },
-    Unit {
-        name: "localsearch-3.service",
-        description: "Tracker 文件索引",
-        domain: 3,
-    },
-];
 
 #[derive(Clone, Debug, Default)]
 pub struct State {
@@ -240,8 +184,8 @@ impl State {
         self.units.iter().find(|unit| unit.name == name)
     }
 
-    /// `switch_tab = false` is used by the automatic status recheck after an
-    /// apply/revert: the action log stays visible while fresh state arrives.
+    /// `switch_tab = false` keeps a visible APPLY LOG while the automatic
+    /// status refresh arrives after apply/revert.
     pub fn absorb(&mut self, outcome: Outcome, switch_tab: bool) {
         let action = outcome.action;
         if switch_tab {
@@ -249,8 +193,8 @@ impl State {
         }
         match action {
             Action::Status => {
-                self.conclusion = conclusion(outcome.ok, &outcome.output);
-                self.units = parse_units(&outcome.output);
+                self.conclusion = status_from_facts(&outcome);
+                self.units = units_from_facts(&outcome);
                 self.checked = sys::local_clock();
                 self.status = Some(outcome);
             }
@@ -263,156 +207,128 @@ impl State {
     }
 }
 
-pub fn conclusion(ok: bool, output: &str) -> Status {
-    if !ok {
-        Status::Failed
-    } else if output.contains("已完全对齐") {
-        Status::Aligned
-    } else if output.contains("未完全对齐") {
-        Status::Attention
-    } else {
-        Status::Unknown
+fn status_from_facts(outcome: &Outcome) -> Status {
+    if !outcome.ok {
+        return Status::Failed;
+    }
+    match outcome.facts["status"].as_str().unwrap_or("unknown") {
+        "aligned" => Status::Aligned,
+        "attention" => Status::Attention,
+        "failed" => Status::Failed,
+        _ => Status::Unknown,
     }
 }
 
-/// Parse the eight `root-gnome-align.sh status` rows. Unknown lines are
-/// skipped, so a future tool version cannot produce imaginary green units.
-pub fn parse_units(output: &str) -> Vec<UnitState> {
-    let mut units = Vec::new();
-    for line in output.lines() {
-        let trimmed = line.trim();
-        let mut parts = trimmed.split_whitespace();
-        let first = parts.next().unwrap_or_default();
-        let name = if matches!(first, "✓" | "!" | "✗") {
-            parts.next().unwrap_or_default()
-        } else {
-            first
-        };
-        if !UNITS.iter().any(|unit| unit.name == name) {
-            continue;
-        }
-        let mut active = "unknown".to_string();
-        let mut enabled = "unknown".to_string();
-        let mut override_applied = false;
-        for token in parts {
-            if let Some(value) = token.strip_prefix("active=") {
-                active = value.to_string();
-            } else if let Some(value) = token.strip_prefix("enabled=") {
-                enabled = value.to_string();
-            } else if let Some(value) = token.strip_prefix("覆盖=") {
-                override_applied = value == "true";
-            }
-        }
-        let healthy = active == "active" && override_applied;
-        units.push(UnitState {
-            name: name.to_string(),
-            active,
-            enabled,
-            override_applied,
-            healthy,
-        });
-    }
-    units
+fn units_from_facts(outcome: &Outcome) -> Vec<UnitState> {
+    facts_units(&outcome.facts)
 }
 
-/// The launcher is invoked through `bash`, so a fresh checkout without the
-/// executable bit still works. The script resolves its own binary via `HERE`.
-pub fn command_line(action: Action) -> (PathBuf, Vec<String>) {
-    let script = tool_dir().join(SCRIPT);
-    (
-        PathBuf::from("bash"),
-        vec![
-            script.to_string_lossy().into_owned(),
-            action.arg().to_string(),
-        ],
-    )
-}
-
-/// Run one upstream action. Called from a background executor, never on the UI
-/// thread. Missing tools and launch failures become visible `FAILED` output.
-pub fn run(action: Action) -> Outcome {
-    let dir = tool_dir();
-    let script = dir.join(SCRIPT);
-    let (exe, args) = command_line(action);
-    let command = format!("./{SCRIPT} {}", action.arg());
-    if !script.exists() {
-        return Outcome {
-            action,
-            ok: false,
-            output: format!(
-                "工具未安装：{}\n\n设置 {} 指向工具目录。",
-                script.display(),
-                fixes::ROOT_ENV
-            ),
-            command,
-        };
-    }
-    let result = Command::new(&exe).args(&args).current_dir(&dir).output();
-    let (ok, output) = match result {
-        Ok(out) => {
-            let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
-            let err = String::from_utf8_lossy(&out.stderr);
-            if !err.is_empty() {
-                text.push_str("\n--- stderr ---\n");
-                text.push_str(&err);
-            }
-            if text.trim().is_empty() {
-                text = format!("{command} 已执行（无输出）");
-            }
-            (out.status.success(), text)
-        }
-        Err(error) => (false, format!("启动 {command} 失败：{error}")),
+/// Convert backend facts into the renderer's row type. Unknown fields never
+/// become healthy rows.
+pub fn facts_units(facts: &Value) -> Vec<UnitState> {
+    let Some(rows) = facts["units"].as_array() else {
+        return Vec::new();
     };
+    rows.iter()
+        .filter_map(|row| {
+            let name = row["name"].as_str()?.to_string();
+            if !UNITS.iter().any(|unit| unit.name == name) {
+                return None;
+            }
+            let active = row["active"].as_str().unwrap_or("unknown").to_string();
+            let enabled = row["enabled"].as_str().unwrap_or("unknown").to_string();
+            let override_applied = row["override_applied"] == true;
+            let healthy = row["healthy"] == true;
+            Some(UnitState {
+                name,
+                active,
+                enabled,
+                override_applied,
+                healthy,
+            })
+        })
+        .collect()
+}
+
+pub fn backend_op(action: Action) -> fixes_backend::Op {
+    match action {
+        Action::Status => fixes_backend::Op::Status,
+        Action::Doctor => fixes_backend::Op::Doctor,
+        Action::Apply => fixes_backend::Op::Apply,
+        Action::Revert => fixes_backend::Op::Revert,
+        Action::RestartShell => fixes_backend::Op::RestartShell,
+    }
+}
+
+/// The one backend call. Called from a background executor, never on the UI
+/// thread. Missing tools are impossible now; real failures still become
+/// visible `FAILED` output.
+pub fn run(action: Action) -> Outcome {
+    let result = fixes_backend::run(fixes_backend::Tool::RootAlign, backend_op(action));
     Outcome {
         action,
-        ok,
-        output,
-        command,
+        ok: result.ok,
+        output: result.output,
+        command: result.command,
+        facts: result.facts,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
-    const SAMPLE: &str = "── 当前对齐状态 ──\n  ✓ pipewire.service           active=active     enabled=enabled    覆盖=true  PipeWire 媒体核心（音频路由）\n  ✓ pipewire.socket            active=active     enabled=enabled    覆盖=true  PipeWire 控制/管理套接字\n  ✓ pipewire-pulse.service     active=active     enabled=enabled    覆盖=true  PulseAudio 兼容层\n  ✓ pipewire-pulse.socket      active=active     enabled=enabled    覆盖=true  PulseAudio 兼容套接字\n  ✓ wireplumber.service        active=active     enabled=enabled    覆盖=true  会话媒体管理器\n  ✓ filter-chain.service       active=active     enabled=enabled    覆盖=true  PipeWire 滤波器链\n  ✓ mpris-proxy.service        active=active     enabled=enabled    覆盖=true  蓝牙 MPRIS 媒体代理\n  ✓ localsearch-3.service      active=active     enabled=enabled    覆盖=true  Tracker 文件索引\n\n状态：已完全对齐 ✅";
-
-    #[test]
-    fn parses_all_real_status_rows() {
-        let units = parse_units(SAMPLE);
-        assert_eq!(units.len(), UNITS.len());
-        assert!(units.iter().all(|unit| unit.healthy));
-        assert_eq!(units[0].active, "active");
-        assert_eq!(units[0].enabled, "enabled");
-        assert_eq!(conclusion(true, SAMPLE), Status::Aligned);
-        assert_eq!(conclusion(true, "状态：未完全对齐"), Status::Attention);
-        assert_eq!(conclusion(false, "工具未安装"), Status::Failed);
-        assert_eq!(conclusion(true, ""), Status::Unknown);
-    }
-
-    #[test]
-    fn unknown_output_never_fakes_health() {
-        assert!(parse_units("随便一行输出").is_empty());
-        let mut state = State::default();
-        let outcome = Outcome {
+    fn outcome(facts: Value) -> Outcome {
+        Outcome {
             action: Action::Status,
             ok: true,
-            output: "无法识别".into(),
-            command: "status".into(),
-        };
-        state.absorb(outcome, true);
-        assert_eq!(state.conclusion, Status::Unknown);
-        assert!(state.units.is_empty());
+            output: "stdout".into(),
+            command: "gnous builtin root-align / status".into(),
+            facts,
+        }
     }
 
     #[test]
-    fn commands_are_read_only_or_explicit_and_have_no_dangerous_flags() {
+    fn real_facts_fill_all_eight_units() {
+        let rows: Vec<_> = UNITS
+            .iter()
+            .map(|unit| json!({"name": unit.name, "active": "active", "enabled": "enabled", "override_applied": true, "healthy": true}))
+            .collect();
+        let mut state = State::default();
+        state.absorb(outcome(json!({"status": "aligned", "units": rows})), true);
+        assert_eq!(state.conclusion, Status::Aligned);
+        assert_eq!(state.units.len(), 8);
+        assert!(state.units.iter().all(|unit| unit.healthy));
+    }
+
+    #[test]
+    fn unknown_facts_never_fake_health() {
+        let mut state = State::default();
+        state.absorb(outcome(json!({"status": "unknown"})), true);
+        assert_eq!(state.conclusion, Status::Unknown);
+        assert!(state.units.is_empty());
+        let mut failed = outcome(json!({"status": "failed"}));
+        failed.ok = false;
+        state.absorb(failed, true);
+        assert_eq!(state.conclusion, Status::Failed);
+    }
+
+    #[test]
+    fn commands_are_built_in_and_have_no_dangerous_flags() {
         for action in Action::ALL {
             assert!(!action.arg().contains("--"));
-            let (_, args) = command_line(action);
-            assert!(args[0].ends_with(SCRIPT));
-            assert_eq!(args[1], action.arg());
-            assert_eq!(args.len(), 2);
+            assert!(!action.arg().contains(".sh"));
+            assert_eq!(
+                backend_op(action),
+                match action {
+                    Action::Status => fixes_backend::Op::Status,
+                    Action::Doctor => fixes_backend::Op::Doctor,
+                    Action::Apply => fixes_backend::Op::Apply,
+                    Action::Revert => fixes_backend::Op::Revert,
+                    Action::RestartShell => fixes_backend::Op::RestartShell,
+                }
+            );
         }
         assert!(!Action::Status.is_mutating());
         assert!(!Action::Doctor.is_mutating());

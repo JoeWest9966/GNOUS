@@ -1,14 +1,17 @@
-//! `gnome-fixes`: one page-level extension bundling the small desktop patches
-//! that live under `/home/root/GNOME/`.
+//! `gnome-fixes`: one page-level extension bundling the small desktop patches.
 //!
-//! The page is a thin, honest shell: every probe runs the *real* external tool
-//! and shows its stdout. Nothing is cached, no system state is invented, and
-//! dangerous flags (`--now`, `--restart`, `--run --yes`) are never invoked.
+//! `clipfix` and `rootdesk` are backed by GNOUS' own versioned Rust backend.
+//! The remaining three tools still live under `/home/root/GNOME/` and will be
+//! moved when they become independent extensions. Every probe shows the real
+//! result / stdout; no system state is invented and dangerous flags are never
+//! invoked.
 //!
 //! Manifest: `extensions/gnome-fixes/manifest.toml`.
 
 use std::path::PathBuf;
 use std::process::Command;
+
+use crate::fixes_backend;
 
 /// Where all five upstream tools live. Override for tests / other machines.
 pub const ROOT_ENV: &str = "GNOUS_FIXES_ROOT";
@@ -43,8 +46,8 @@ impl Action {
     }
 }
 
-/// One row in the fixes list. `command` is built from `root()` on purpose:
-/// moving the toolkit should only require changing one environment variable.
+/// One row in the fixes list. `builtin` selects the shared Rust backend;
+/// external rows still resolve their command through `root()`.
 #[derive(Clone, Debug)]
 pub struct Fix {
     pub id: &'static str,
@@ -55,6 +58,7 @@ pub struct Fix {
     pub command: &'static str,
     pub cells: [(&'static str, &'static str); 4],
     pub commands: [(&'static str, &'static str); 3],
+    pub builtin: Option<fixes_backend::Tool>,
 }
 
 const fn cells(
@@ -73,9 +77,9 @@ pub const FIXES: &[Fix] = &[
         id: "clipfix",
         number: "01",
         name: "剪贴板",
-        subtitle: "终端里能复制、粘不出来 · Bug补丁/复制相关",
-        why: "用户态拦不住「应用 → compositor」这一步，Wayland 剪贴板只能靠重启会话恢复。这里的补丁是绕行：让终端走 X11，使用没坏的 Xwayland 通道。",
-        command: "systemctl --user set-environment GDK_BACKEND=x11",
+        subtitle: "终端里能复制、粘不出来 · GNOUS 内建 clipfix",
+        why: "用户态拦不住「应用 → compositor」这一步，Wayland 剪贴板只能靠重启会话恢复。GNOUS 内建后端做真实双连接回环自测，并把终端绕到没坏的 Xwayland 通道。",
+        command: "gnous builtin clipfix / check · apply · revert",
         cells: cells(
             ("X11 → X11", "Xwayland 内部正常"),
             ("X11 → Wayland", "owner = mutter 隐形窗口"),
@@ -83,10 +87,11 @@ pub const FIXES: &[Fix] = &[
             ("Wayland → Wayland", "set_selection 后不取数据"),
         ),
         commands: [
-            ("check", "./check.sh"),
-            ("apply", "./on.sh"),
-            ("revert", "./off.sh"),
+            ("check", "gnous builtin clipfix / check"),
+            ("apply", "gnous builtin clipfix / apply"),
+            ("revert", "gnous builtin clipfix / revert"),
         ],
+        builtin: Some(fixes_backend::Tool::Clipfix),
     },
     Fix {
         id: "display",
@@ -106,6 +111,7 @@ pub const FIXES: &[Fix] = &[
             ("apply", "python3 display-mode auto"),
             ("revert", "python3 display-mode both"),
         ],
+        builtin: None,
     },
     Fix {
         id: "termfont",
@@ -125,14 +131,15 @@ pub const FIXES: &[Fix] = &[
             ("apply", "./target/release/termfont all 12"),
             ("revert", "./target/release/termfont term system"),
         ],
+        builtin: None,
     },
     Fix {
         id: "rootdesk",
         number: "04",
         name: "Root 桌面对齐",
-        subtitle: "root 会话缺 PipeWire / 全局搜索 · Root用户桌面功能对齐",
-        why: "发行版 user 单元用 ConditionUser=!root 跳过整个媒体栈；本工具只在 ~/.config/systemd/user 写空赋值覆盖，不改 /usr/lib、不影响普通用户，删掉目录即可还原。",
-        command: "root-gnome-align apply",
+        subtitle: "root 会话缺 PipeWire / 全局搜索 · GNOUS 内建 root-align",
+        why: "发行版 user 单元用 ConditionUser=!root 跳过整个媒体栈；GNOUS 内建后端只在 ~/.config/systemd/user 写空赋值覆盖，不改 /usr/lib、不影响普通用户，JSON 状态保证精确回退。",
+        command: "gnous builtin root-align / status · apply · revert",
         cells: cells(
             ("PipeWire", "音频路由核心"),
             ("wireplumber", "设备枚举 / 音量"),
@@ -140,10 +147,11 @@ pub const FIXES: &[Fix] = &[
             ("localsearch-3", "全局搜索索引"),
         ),
         commands: [
-            ("check", "./root-gnome-align.sh status"),
-            ("apply", "./root-gnome-align.sh apply"),
-            ("revert", "./root-gnome-align.sh revert"),
+            ("check", "gnous builtin root-align / status"),
+            ("apply", "gnous builtin root-align / apply"),
+            ("revert", "gnous builtin root-align / revert"),
         ],
+        builtin: Some(fixes_backend::Tool::RootAlign),
     },
     Fix {
         id: "proxy",
@@ -163,6 +171,7 @@ pub const FIXES: &[Fix] = &[
             ("apply", "./on.sh"),
             ("revert", "./off.sh"),
         ],
+        builtin: None,
     },
 ];
 
@@ -175,14 +184,28 @@ pub struct Outcome {
     pub fix_id: &'static str,
     pub ok: bool,
     pub output: String,
+    /// Structured facts from the shared in-process backend; external tools
+    /// leave this null because their stdout is still the source of truth.
+    pub facts: Option<serde_json::Value>,
+}
+
+pub fn builtin_action(tool: fixes_backend::Tool, action: Action) -> fixes_backend::Op {
+    match action {
+        Action::Check => match tool {
+            fixes_backend::Tool::Clipfix => fixes_backend::Op::Check,
+            fixes_backend::Tool::RootAlign => fixes_backend::Op::Status,
+        },
+        Action::Apply => fixes_backend::Op::Apply,
+        Action::Revert => fixes_backend::Op::Revert,
+    }
 }
 
 fn dir_for(id: &'static str) -> &'static str {
     match id {
-        "clipfix" => "Bug补丁/复制相关",
+        "clipfix" => "",
         "display" => "多屏幕",
         "termfont" => "终端字体",
-        "rootdesk" => "Root用户桌面功能对齐",
+        "rootdesk" => "",
         "proxy" => "代理工具",
         _ => "",
     }
@@ -199,21 +222,27 @@ pub fn command_line(fix: &Fix, action: Action) -> Option<(PathBuf, Vec<String>)>
     let mut parts = raw.split_whitespace();
     let program = parts.next()?;
     let mut args: Vec<String> = parts.map(str::to_string).collect();
+    debug_assert!(
+        fix.builtin.is_none(),
+        "built-in rows must not reach command_line"
+    );
     let exe = if program == "./target/release/termfont" {
         root().join("终端字体/target/release/termfont")
     } else if program == "python3" {
         // Keep the script's own shebang/working directory intact.
         PathBuf::from("python3")
     } else if program.starts_with("./") {
-        let dir = root().join(dir_for(fix.id));
-        if program == "./root-gnome-align.sh" {
-            dir.join("root-gnome-align.sh")
-        } else {
-            // Shell wrapper: run through bash so it works even when the
-            // executable bit is missing in a fresh checkout.
-            args.insert(0, dir.join(&program[2..]).to_string_lossy().into_owned());
-            PathBuf::from("bash")
-        }
+        // Shell wrapper: run through bash so it works even when the
+        // executable bit is missing in a fresh checkout.
+        args.insert(
+            0,
+            root()
+                .join(dir_for(fix.id))
+                .join(&program[2..])
+                .to_string_lossy()
+                .into_owned(),
+        );
+        PathBuf::from("bash")
     } else {
         PathBuf::from(program)
     };
@@ -228,14 +257,26 @@ pub fn run(fix_id: &'static str, action: Action) -> Outcome {
             fix_id,
             ok: false,
             output: format!("未知修复项: {fix_id}"),
+            facts: None,
         };
     };
+    if let Some(tool) = fix.builtin {
+        let result = fixes_backend::run(tool, builtin_action(tool, action));
+        return Outcome {
+            action,
+            fix_id,
+            ok: result.ok,
+            output: result.output,
+            facts: Some(result.facts),
+        };
+    }
     let Some((exe, args)) = command_line(fix, action) else {
         return Outcome {
             action,
             fix_id,
             ok: false,
             output: "命令未配置".to_string(),
+            facts: None,
         };
     };
     if !exe.exists() && exe.is_absolute() {
@@ -247,6 +288,7 @@ pub fn run(fix_id: &'static str, action: Action) -> Outcome {
                 "工具未安装：{}\n\n设置 {ROOT_ENV} 指向工具目录。",
                 exe.display()
             ),
+            facts: None,
         };
     }
     let result = Command::new(&exe)
@@ -273,6 +315,7 @@ pub fn run(fix_id: &'static str, action: Action) -> Outcome {
         fix_id,
         ok,
         output,
+        facts: None,
     }
 }
 
@@ -302,7 +345,8 @@ impl FixState {
 
     pub fn absorb(&mut self, outcome: Outcome) {
         self.status = if outcome.ok {
-            status(self.id, &outcome.output)
+            status_from_facts(outcome.facts.as_ref())
+                .unwrap_or_else(|| status(self.id, &outcome.output))
         } else {
             Status::Attention
         };
@@ -333,6 +377,20 @@ impl Status {
     }
 }
 
+/// Built-in tools report an explicit enum in `facts`; no stdout substring
+/// decides whether a system is healthy.
+pub fn status_from_facts(facts: Option<&serde_json::Value>) -> Option<Status> {
+    match facts?.get("status")?.as_str()? {
+        "applied" | "aligned" => Some(Status::Applied),
+        "healthy" | "reverted" | "diagnosed" => Some(Status::Healthy),
+        "attention" | "broken" => Some(Status::Attention),
+        "failed" | "unknown" => Some(Status::Unknown),
+        _ => None,
+    }
+}
+
+/// Parse the *real* external probe output into a short row state. Deliberately
+/// conservative: unknown output is `Unknown`, never a confident green.
 pub fn status(fix_id: &str, output: &str) -> Status {
     match fix_id {
         "clipfix" => {
@@ -413,9 +471,34 @@ mod tests {
     fn every_action_has_a_command() {
         for fix in FIXES {
             for action in [Action::Check, Action::Apply, Action::Revert] {
-                assert!(command_line(fix, action).is_some(), "{} {action:?}", fix.id);
+                if fix.builtin.is_some() {
+                    assert!(
+                        fix.commands
+                            .iter()
+                            .any(|(key, _)| *key == action.tag().to_ascii_lowercase())
+                    );
+                } else {
+                    assert!(command_line(fix, action).is_some(), "{} {action:?}", fix.id);
+                }
             }
         }
+    }
+
+    #[test]
+    fn builtin_facts_are_the_status_source_of_truth() {
+        assert_eq!(
+            status_from_facts(Some(&serde_json::json!({"status": "aligned"}))),
+            Some(Status::Applied)
+        );
+        assert_eq!(
+            status_from_facts(Some(&serde_json::json!({"status": "healthy"}))),
+            Some(Status::Healthy)
+        );
+        assert_eq!(
+            status_from_facts(Some(&serde_json::json!({"status": "failed"}))),
+            Some(Status::Unknown)
+        );
+        assert_eq!(status_from_facts(None), None);
     }
 
     #[test]

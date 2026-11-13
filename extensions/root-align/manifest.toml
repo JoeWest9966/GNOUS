@@ -1,6 +1,6 @@
 id = "root-align"
 name = "Root 桌面对齐"
-summary = "root 会话媒体栈 / 全局搜索诊断台，原样展示外部 status、doctor 与动作输出"
+summary = "root 会话媒体栈 / 全局搜索诊断台，基于 GNOUS 内建后端的结构化状态与动作输出"
 version = "0.1.0"
 capabilities = ["page"]
 icon = "audio-lines"
