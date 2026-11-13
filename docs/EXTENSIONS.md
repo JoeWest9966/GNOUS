@@ -49,8 +49,8 @@ id = "table"
 label = "Table"
 
 [[views]]
-id = "live"
-label = "Live"
+id = "cpu"
+label = "CPU"
 
 # 声明式配置：界面据此自动生成表单
 [settings.position]
@@ -89,7 +89,7 @@ default = true
 
 | 扩展 | 层级 | 入口 |
 | --- | --- | --- |
-| `processes` | 页面级 | Overview 分区下的 5 个视图：Table / Live / Memory / Tree / Groups |
+| `processes` | 页面级 | Overview 分区下的 5 个视图：Table / CPU / Memory / Tree / Groups |
 | `gnome-fixes` | 页面级 | Extensions 分区下的 Fixes：5 个小补丁统一「体检 / 应用 / 回退」；`clipfix` / `rootdesk` 由共用内建后端提供结构化状态，另外 3 项仍走外部工具 |
 | `root-align` | 页面级 | Extensions 分区下的 Align：C 方案诊断台，8 个 systemd 用户单元按功能域分组；`status` / `doctor` / 动作 stdout 原样展示，健康结论来自内建 facts |
 | `startup-layouts` | 页面级 | 左列独立分区 Startup，四个视图 Layouts / Boot / Journal / 项目：勾选开机铺开的页面、按比例排列窗口、配置启动策略、登记自研启动项目脚本 |

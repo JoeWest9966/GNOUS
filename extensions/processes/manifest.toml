@@ -15,8 +15,8 @@ id = "table"
 label = "Table"
 
 [[views]]
-id = "live"
-label = "Live"
+id = "cpu"
+label = "CPU"
 
 [[views]]
 id = "memory"

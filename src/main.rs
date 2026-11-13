@@ -140,8 +140,12 @@ pub(crate) struct App {
     switches: Vec<toggles::Toggle>,
     proc_sampler: proc::Sampler,
     proc: proc::Snapshot,
-    /// Total CPU% of the last 30 samples, for the live view.
+    /// Total CPU% of the last CPU_HISTORY samples, for the CPU view.
     cpu_history: Vec<f32>,
+    /// Per-core busy fractions, one series per core, same cadence.
+    core_history: Vec<Vec<f32>>,
+    /// Chart window on the CPU view, in samples (labels map to wall-clock).
+    cpu_window: usize,
     proc_selected: Option<u32>,
     /// Pending signal awaiting the confirmation dialog.
     proc_dialog: Option<ProcDialog>,
@@ -191,6 +195,11 @@ const POLL: Duration = Duration::from_millis(100);
 /// Overview data still updates once a second; extensions every ten seconds.
 const SYS_TICKS: u32 = 10;
 const EXTENSION_TICKS: u32 = 100;
+
+/// Total CPU samples kept for the CPU view's chart. Sampling stays on the
+/// process plugin's own cadence, so the wall-clock span depends on the
+/// selected refresh rate (0.5s → 1 min, 5s → 10 min).
+const CPU_HISTORY: usize = 120;
 
 impl App {
     fn new(cx: &mut Context<Self>) -> Self {
@@ -280,6 +289,8 @@ impl App {
             proc_sampler,
             proc,
             cpu_history: Vec::new(),
+            core_history: Vec::new(),
+            cpu_window: 120,
             proc_selected: None,
             proc_dialog: None,
             proc_menu: None,
@@ -336,8 +347,19 @@ impl App {
 
     fn push_cpu_history(&mut self) {
         self.cpu_history.push(self.proc.cpu_total);
-        let excess = self.cpu_history.len().saturating_sub(30);
+        let excess = self.cpu_history.len().saturating_sub(CPU_HISTORY);
         self.cpu_history.drain(0..excess);
+        for (index, value) in self.snap.cores.iter().enumerate() {
+            if let Some(series) = self.core_history.get_mut(index) {
+                series.push(*value * 100.);
+                let extra = series.len().saturating_sub(CPU_HISTORY);
+                series.drain(0..extra);
+            }
+        }
+        // A hotplugged core (or a shrunken read) gets a fresh series so the
+        // per-core chart stays aligned with the current snapshot.
+        self.core_history
+            .resize_with(self.snap.cores.len(), Vec::new);
     }
 
     /// Persist preferences and the journal after every deliberate mutation.
@@ -1051,6 +1073,40 @@ impl App {
         cx.notify();
     }
 
+    /// Jump to the Table view with `pid` selected, scrolled into view. Used by
+    /// the CPU view's top-process list.
+    pub(crate) fn focus_process_in_table(&mut self, pid: u32, cx: &mut Context<Self>) {
+        self.proc_selected = Some(pid);
+        if !(self.nav.page.plugin == "processes" && self.nav.page.view == "table") {
+            let page = self
+                .nav
+                .section
+                .pages()
+                .into_iter()
+                .find(|page| page.plugin == "processes" && page.view == "table")
+                .unwrap_or(PageRef {
+                    plugin: "processes",
+                    view: "table",
+                    label: "Table",
+                });
+            self.nav.page = page;
+            self.close_process_overlays();
+        }
+        // Reveal the row: the pid's position among the filtered rows.
+        let pids = self.table.visible_pids(&self.proc.processes, self.my_uid);
+        if let Some(index) = pids.iter().position(|candidate| *candidate == pid) {
+            self.table_led.handle().scroll_to_item(index);
+        }
+        cx.notify();
+    }
+
+    /// Select a process row; used by every process view.
+    /// Chart window on the CPU view, in samples (0.5s refresh → 60s span).
+    pub(crate) fn set_cpu_window(&mut self, window: usize, cx: &mut Context<Self>) {
+        self.cpu_window = window.clamp(1, CPU_HISTORY);
+        cx.notify();
+    }
+
     /// Select a process row; used by every process view.
     pub(crate) fn select_process(&mut self, pid: u32, cx: &mut Context<Self>) {
         self.proc_selected = if self.proc_selected == Some(pid) {
@@ -1353,6 +1409,8 @@ impl Render for App {
                             page: self.nav.page,
                             proc: &self.proc,
                             cpu_history: &self.cpu_history,
+                            core_history: &self.core_history,
+                            cpu_window: self.cpu_window,
                             proc_selected,
                             table: &self.table,
                             my_uid: self.my_uid,
@@ -1800,6 +1858,8 @@ pub(crate) struct Overview<'a> {
     pub(crate) page: PageRef,
     pub(crate) proc: &'a proc::Snapshot,
     pub(crate) cpu_history: &'a [f32],
+    pub(crate) core_history: &'a [Vec<f32>],
+    pub(crate) cpu_window: usize,
     pub(crate) proc_selected: Option<u32>,
     pub(crate) table: &'a table_state::TableState,
     pub(crate) my_uid: u32,

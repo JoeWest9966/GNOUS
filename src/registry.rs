@@ -127,6 +127,7 @@ mod tests {
         );
         assert_eq!(processes.views.len(), 5);
         assert!(processes.views.iter().any(|v| v.id == "table"));
+        assert!(processes.views.iter().any(|v| v.id == "cpu"));
         let fixes = all
             .iter()
             .find(|m| m.id == "gnome-fixes")

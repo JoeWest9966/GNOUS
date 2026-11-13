@@ -23,7 +23,7 @@ use crate::{App, Overview, ProcAction, ProcOverlays};
 pub fn body(view: &str, overview: &Overview, weak: &WeakEntity<App>) -> Div {
     match view {
         "table" => table(overview, weak),
-        "live" => live(overview, weak),
+        "cpu" => cpu(overview, weak),
         "memory" => memory(overview, weak),
         "tree" => tree(overview, weak),
         "groups" => groups(overview, weak),
@@ -720,15 +720,47 @@ fn table_row(
 }
 
 // ============================================================================
-// B · live
+// B · cpu
 // ============================================================================
 
-fn live(overview: &Overview, weak: &WeakEntity<App>) -> Div {
+/// Chart windows, in samples. Labels are computed at render time from the
+/// plugin's real refresh rate, so a 2s cadence correctly reads "240 秒".
+const CPU_WINDOWS: [usize; 3] = [120, 60, 30];
+
+fn cpu_window_label(window: usize, refresh_secs: f32) -> String {
+    let secs = window as f32 * refresh_secs;
+    if secs >= 60. {
+        format!("{:.0} 分钟", secs / 60.)
+    } else {
+        format!("{secs:.0} 秒")
+    }
+}
+
+fn cpu(overview: &Overview, weak: &WeakEntity<App>) -> Div {
     let snap = overview.proc;
+    let sys = overview.snap;
+    let history = overview.cpu_history;
     let max = snap.processes.iter().map(|p| p.cpu).fold(1., f32::max);
     let top: Vec<&Process> = snap.processes.iter().take(8).collect();
-    let history = overview.cpu_history;
-    let spark: Vec<u8> = history.iter().map(|v| v.clamp(0., 100.) as u8).collect();
+    let refresh_secs = overview.table.refresh.duration().as_secs_f32();
+    let window: usize = overview.cpu_window.min(history.len().max(1));
+    let spark: Vec<u8> = history
+        .iter()
+        .rev()
+        .take(window)
+        .rev()
+        .map(|v| v.clamp(0., 100.) as u8)
+        .collect();
+    // Sparkline x-positions are spread over the fixed width, so a shorter
+    // history fills from the right and grows leftward as samples accumulate.
+    let collected = history.len() < window;
+    let temp = sys.cpu_right.clone();
+    let cores = sys.cores.len();
+    let core_hz = if sys.cpu_left.is_empty() {
+        String::new()
+    } else {
+        sys.cpu_left.clone()
+    };
 
     h().items_stretch()
         .gap(px(1.))
@@ -761,17 +793,53 @@ fn live(overview: &Overview, weak: &WeakEntity<App>) -> Div {
                                         .child(
                                             txt("%", 14., FontWeight::LIGHT, muted()).mb(px(6.)),
                                         ),
-                                ),
+                                )
+                                .child(txt(core_hz, 10.5, FontWeight::NORMAL, dim()).mt(px(6.))),
                         )
                         .child(
                             v().items_end()
-                                .child(caps("最近 30 秒", 9.5, FontWeight::NORMAL, dim(), 0.2))
+                                .child(h().gap(px(6.)).children(CPU_WINDOWS.iter().map(|&span| {
+                                    let active = window == span;
+                                    let weak = weak.clone();
+                                    div()
+                                        .id(("cpu-window", span))
+                                        .cursor_pointer()
+                                        .px(px(7.))
+                                        .py(px(3.))
+                                        .border(px(1.))
+                                        .border_color(if active { accent() } else { line_strong() })
+                                        .text_color(if active { accent() } else { dim() })
+                                        .hover(|this| {
+                                            this.border_color(accent()).text_color(accent())
+                                        })
+                                        .on_click(move |_, _, cx| {
+                                            cx.stop_propagation();
+                                            let _ = weak
+                                                .update(cx, |app, cx| app.set_cpu_window(span, cx));
+                                        })
+                                        .child(caps(
+                                            &cpu_window_label(span, refresh_secs),
+                                            9.,
+                                            FontWeight::NORMAL,
+                                            if active { accent() } else { dim() },
+                                            0.14,
+                                        ))
+                                })))
                                 .child(
                                     txt(
-                                        format!(
-                                            "峰值 {:.0}%",
-                                            history.iter().fold(0f32, |m, v| m.max(*v))
-                                        ),
+                                        if collected {
+                                            format!(
+                                                "峰值 {:.0}% · 采集中 {}/{}",
+                                                history.iter().fold(0f32, |m, v| m.max(*v)),
+                                                history.len(),
+                                                window,
+                                            )
+                                        } else {
+                                            format!(
+                                                "峰值 {:.0}%",
+                                                history.iter().fold(0f32, |m, v| m.max(*v))
+                                            )
+                                        },
                                         10.5,
                                         FontWeight::NORMAL,
                                         muted(),
@@ -794,12 +862,13 @@ fn live(overview: &Overview, weak: &WeakEntity<App>) -> Div {
                     let pid = process.pid;
                     let sel = overview.proc_selected == Some(pid);
                     let weak = weak.clone();
+                    let spark: Vec<u8> = process.history.clone();
                     v().id(("hot", pid))
                         .cursor_pointer()
                         .py(px(7.))
                         .when(sel, |this| this.bg(alpha(0xffffff0a)))
                         .on_click(move |_, _, cx| {
-                            let _ = weak.update(cx, |app, cx| app.select_process(pid, cx));
+                            let _ = weak.update(cx, |app, cx| app.focus_process_in_table(pid, cx));
                         })
                         .child(
                             h().items_center()
@@ -827,6 +896,13 @@ fn live(overview: &Overview, weak: &WeakEntity<App>) -> Div {
                                         text()
                                     }),
                                 ))
+                                .child(div().w(px(64.)).h(px(16.)).child(sparkline(
+                                    &spark,
+                                    64.,
+                                    16.,
+                                    rgba(0xffffff88).into(),
+                                    true,
+                                )))
                                 .child(div().w(px(56.)).flex().justify_end().child(txt(
                                     format!("{:.1}%", process.cpu),
                                     11.5,
@@ -844,22 +920,69 @@ fn live(overview: &Overview, weak: &WeakEntity<App>) -> Div {
                 .child(caps("状态分布", 10., FontWeight::NORMAL, dim(), 0.22))
                 .child(state_stack(snap))
                 .child(div().h(px(1.)).w_full().bg(line()).my(px(22.)))
+                .child(caps("每核占用", 10., FontWeight::NORMAL, dim(), 0.22))
+                .children((0..cores).map(|index| {
+                    let value = sys.cores.get(index).copied().unwrap_or(0.);
+                    let series: Vec<u8> = overview
+                        .core_history
+                        .get(index)
+                        .map(|s| s.iter().map(|v| v.clamp(0., 100.) as u8).collect())
+                        .unwrap_or_default();
+                    core_line(index, value, &series)
+                }))
+                .child(div().h(px(1.)).w_full().bg(line()).my(px(22.)))
                 .child(caps("系统", 10., FontWeight::NORMAL, dim(), 0.22))
                 .child(stat_line(
-                    "内存",
-                    format!(
-                        "{:.1} / {:.0} GB",
-                        snap.mem_used_kb as f32 / 1024. / 1024.,
-                        snap.mem_total_kb as f32 / 1024. / 1024.
-                    ),
+                    "温度",
+                    if temp == "—" || temp.is_empty() {
+                        "无传感器".to_string()
+                    } else {
+                        temp
+                    },
                 ))
-                .child(stat_line("线程", format!("{}", snap.threads)))
+                .child(stat_line("网络", sys.net_right.clone()))
                 .child(stat_line(
                     "负载",
-                    format!("{:.2} / {:.2}", snap.load.0, snap.load.1),
+                    format!(
+                        "{:.2} / {:.2} / {:.2}",
+                        snap.load.0, snap.load.1, snap.load.2
+                    ),
                 ))
+                .child(stat_line("上下文切换", format!("{:.0} /秒", sys.ctxt_rate)))
+                .child(stat_line("中断", format!("{:.0} /秒", sys.intr_rate)))
+                .child(stat_line("可运行", format!("{} 个进程", sys.procs_running)))
+                .child(stat_line("线程总数", format!("{}", snap.threads)))
                 .child(stat_line("运行时长", overview.snap.detail.clone())),
         )
+}
+
+/// One per-core row: label, fill bar, mini sparkline of this core's history.
+fn core_line(index: usize, value: f32, series: &[u8]) -> Div {
+    let hot = value > 0.6;
+    h().items_center()
+        .gap(px(10.))
+        .py(px(4.))
+        .child(txt(format!("CPU{index}"), 10., FontWeight::NORMAL, dim()).w(px(40.)))
+        .child(div().flex_1().h(px(1.)).bg(line_strong()).child(
+            div().h(px(3.)).w(relative(value.clamp(0., 1.))).bg(if hot {
+                accent()
+            } else {
+                text()
+            }),
+        ))
+        .child(div().w(px(64.)).h(px(14.)).child(sparkline(
+            series,
+            64.,
+            14.,
+            rgba(0xffffff66).into(),
+            hot,
+        )))
+        .child(div().w(px(44.)).flex().justify_end().child(txt(
+            format!("{:.0}%", value * 100.),
+            10.5,
+            FontWeight::NORMAL,
+            muted(),
+        )))
 }
 
 fn state_stack(snap: &Snapshot) -> Div {
