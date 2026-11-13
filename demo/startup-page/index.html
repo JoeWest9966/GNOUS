@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GNOUS · Startup Layouts</title>
+<style>
+  :root{
+    --bg:#000000;
+    --surface:#0A0A0B;
+    --surface-2:#111113;
+    --surface-3:#161618;
+    --line:rgba(255,255,255,.09);
+    --line-strong:rgba(255,255,255,.18);
+    --text:#F5F5F7;
+    --muted:#86868B;
+    --dim:#5A5A60;
+    --accent:#E31937;
+    --ok:#37D67A;
+    --warn:#F5A623;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scrollbar-width:thin;scrollbar-color:#242424 transparent}
+  html,body{height:100%}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:"Helvetica Neue",Inter,"Segoe UI",system-ui,"Noto Sans SC",sans-serif;
+    -webkit-font-smoothing:antialiased;
+    font-feature-settings:"tnum";
+    overflow:hidden;
+  }
+  .app{display:grid;grid-template-columns:68px 1fr;height:100vh}
+
+  /* ---------- icon rail ---------- */
+  .rail{
+    border-right:1px solid var(--line);
+    display:flex;flex-direction:column;align-items:center;
+    padding:22px 0;gap:6px;
+  }
+  .brand{
+    width:30px;height:30px;border:1px solid var(--line-strong);
+    display:grid;place-items:center;margin-bottom:26px;
+    font-size:11px;letter-spacing:.08em;font-weight:600;
+  }
+  .rail button{
+    width:40px;height:40px;background:none;border:0;color:var(--dim);
+    display:grid;place-items:center;cursor:pointer;position:relative;
+    transition:color .18s;
+  }
+  .rail button:hover{color:var(--text)}
+  .rail button.active{color:var(--text)}
+  .rail button.active::before{
+    content:"";position:absolute;left:-14px;top:12px;bottom:12px;width:2px;background:var(--accent);
+  }
+  .rail svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.3}
+  .rail .spacer{flex:1}
+  .rail button.fresh::after{
+    content:"";position:absolute;top:8px;right:7px;width:3px;height:3px;border-radius:50%;
+    background:var(--accent);
+  }
+
+  /* ---------- main ---------- */
+  main{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+
+  .topbar{
+    height:56px;flex:0 0 56px;border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:34px;padding:0 40px;
+  }
+  .wordmark{font-size:13px;letter-spacing:.34em;font-weight:500}
+  nav{display:flex;gap:30px;height:100%}
+  nav a{
+    display:flex;align-items:center;color:var(--muted);text-decoration:none;
+    font-size:12px;letter-spacing:.13em;text-transform:uppercase;
+    border-bottom:1px solid transparent;transition:color .18s,border-color .18s;
+  }
+  nav a:hover{color:var(--text)}
+  nav a.on{color:var(--text);border-bottom-color:var(--accent)}
+  .topbar .right{margin-left:auto;display:flex;align-items:center;gap:22px;color:var(--muted);font-size:12px;letter-spacing:.06em}
+  .dot{width:5px;height:5px;border-radius:50%;background:var(--ok);display:inline-block;margin-right:7px;vertical-align:1px}
+  .clock{font-variant-numeric:tabular-nums;color:var(--text)}
+
+  .scroll{overflow-y:auto;flex:1;padding:44px 40px 56px}
+  .scroll::-webkit-scrollbar{width:6px}
+  .scroll::-webkit-scrollbar-thumb{background:#222}
+
+  /* ---------- hero ---------- */
+  .eyebrow{
+    font-size:11px;letter-spacing:.26em;text-transform:uppercase;color:var(--dim);margin-bottom:14px;
+  }
+  h1{font-size:40px;font-weight:200;letter-spacing:-.02em;line-height:1.05}
+  .sub{color:var(--muted);font-size:13px;margin-top:12px;letter-spacing:.02em}
+  .hero{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:34px}
+  .hero-actions{display:flex;gap:10px}
+  .btn{
+    background:none;border:1px solid var(--line-strong);color:var(--text);
+    padding:11px 22px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+    cursor:pointer;transition:.18s;font-family:inherit;
+  }
+  .btn:hover{background:#fff;color:#000;border-color:#fff}
+  .btn.solid{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.solid:hover{background:#c2142d;border-color:#c2142d;color:#fff}
+
+  /* ---------- status strip ---------- */
+  .strip{
+    display:flex;align-items:center;gap:0;border-top:1px solid var(--line);
+    border-bottom:1px solid var(--line);margin-bottom:30px;
+  }
+  .strip .cell{
+    padding:15px 26px;border-left:1px solid var(--line);display:flex;align-items:baseline;gap:10px;
+  }
+  .strip .cell:first-child{border-left:0;padding-left:0}
+  .strip .k{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
+  .strip .v{font-size:16px;font-weight:300;letter-spacing:-.01em}
+  .strip .v em{font-style:normal;color:var(--dim);font-size:11px;letter-spacing:.06em;margin-left:3px}
+  .strip .tail{margin-left:auto;padding-left:26px;font-size:10.5px;color:var(--dim);letter-spacing:.08em}
+
+  /* ---------- workbench ---------- */
+  .work{
+    display:grid;grid-template-columns:286px minmax(0,1fr) 306px;
+    gap:1px;background:var(--line);border:1px solid var(--line);
+  }
+  .pane{background:var(--bg);display:flex;flex-direction:column;min-width:0}
+  .pane-h{
+    height:44px;flex:0 0 44px;display:flex;align-items:center;justify-content:space-between;
+    padding:0 16px;border-bottom:1px solid var(--line);
+    font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);
+  }
+  .pane-h .act{
+    background:none;border:0;color:var(--muted);font-family:inherit;cursor:pointer;
+    font-size:10px;letter-spacing:.16em;text-transform:uppercase;padding:4px 0;transition:color .18s;
+  }
+  .pane-h .act:hover{color:var(--text)}
+  .pane-b{overflow-y:auto;flex:1}
+  .pane-b::-webkit-scrollbar{width:5px}
+  .pane-b::-webkit-scrollbar-thumb{background:#222}
+
+  /* page list */
+  .page-row{
+    display:flex;align-items:center;gap:12px;padding:13px 16px;
+    border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer;position:relative;
+    transition:background .16s;
+  }
+  .page-row:hover{background:var(--surface)}
+  .page-row.on{background:var(--surface-2)}
+  .page-row.on::before{
+    content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--accent);
+  }
+  .chk{
+    width:14px;height:14px;flex:0 0 auto;border:1px solid var(--line-strong);
+    background:none;cursor:pointer;display:grid;place-items:center;padding:0;transition:.16s;
+  }
+  .chk:hover{border-color:var(--muted)}
+  .chk svg{width:9px;height:9px;stroke:#000;stroke-width:2.4;fill:none;opacity:0;transition:.16s}
+  .chk[aria-checked="true"]{background:var(--text);border-color:var(--text)}
+  .chk[aria-checked="true"] svg{opacity:1}
+  .page-row.skipped .n{color:var(--dim)}
+  .page-row .meta{min-width:0;flex:1}
+  .page-row .n{font-size:13px;letter-spacing:.01em;display:flex;align-items:baseline;gap:7px}
+  .page-row .n .idx{font-size:9.5px;color:var(--dim);letter-spacing:.14em}
+  .page-row .m{font-size:10.5px;color:var(--dim);margin-top:4px;letter-spacing:.04em}
+  .mini{
+    width:40px;height:26px;flex:0 0 auto;border:1px solid var(--line);
+    display:grid;gap:1px;padding:2px;background:rgba(255,255,255,.02);
+  }
+  .mini i{background:rgba(255,255,255,.14);display:block}
+  .mini i.hot{background:var(--accent);opacity:.75}
+  .page-row.on .mini{border-color:var(--line-strong)}
+
+  /* canvas */
+  .canvas-wrap{
+    flex:1;min-height:420px;display:flex;flex-direction:column;padding:16px;
+    background:
+      radial-gradient(120% 90% at 50% 0%, rgba(255,255,255,.035), transparent 70%),
+      var(--bg);
+  }
+  .canvas-bar{display:flex;align-items:center;gap:14px;margin-bottom:14px}
+  .seg{display:flex;border:1px solid var(--line);background:rgba(255,255,255,.02)}
+  .seg button{
+    background:none;border:0;border-left:1px solid var(--line);color:var(--muted);
+    font-family:inherit;font-size:10.5px;letter-spacing:.1em;padding:7px 13px;cursor:pointer;
+    transition:.16s;
+  }
+  .seg button:first-child{border-left:0}
+  .seg button:hover{color:var(--text);background:rgba(255,255,255,.04)}
+  .seg button.on{color:#000;background:var(--text)}
+  .seg button:disabled{color:#3A3A3E;cursor:not-allowed;background:none}
+  .canvas-bar .screen-id{margin-left:auto;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+
+  .screen{
+    flex:1;display:grid;gap:1px;background:var(--line-strong);
+    border:1px solid var(--line-strong);padding:1px;min-height:0;
+    position:relative;
+  }
+  .screen.empty{place-items:center;background:rgba(255,255,255,.02)}
+  .screen .empty-msg{
+    font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);text-align:center;line-height:2;
+  }
+  .win{
+    background:var(--surface-2);position:relative;padding:12px 12px 10px;
+    display:flex;flex-direction:column;gap:7px;cursor:pointer;overflow:hidden;
+    transition:background .16s;
+  }
+  .win:hover{background:var(--surface-3)}
+  .win.sel{box-shadow:inset 0 0 0 1px var(--accent)}
+  .win.sel .badge{color:var(--accent);border-color:var(--accent)}
+  .win .top{display:flex;align-items:center;gap:8px;min-width:0}
+  .win .badge{
+    width:22px;height:22px;flex:0 0 auto;border:1px solid var(--line-strong);
+    display:grid;place-items:center;font-size:8.5px;letter-spacing:.06em;color:var(--muted);
+  }
+  .win .name{font-size:12px;letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .win .role{margin-left:auto;font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);white-space:nowrap}
+  .win .cmd{
+    font-size:9.5px;color:var(--dim);letter-spacing:.02em;font-family:ui-monospace,"SF Mono",monospace;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .win .geo{
+    margin-top:auto;font-size:9.5px;letter-spacing:.1em;color:var(--dim);
+    display:flex;gap:8px;align-items:baseline;font-variant-numeric:tabular-nums;
+  }
+  .win .geo b{color:var(--muted);font-weight:400}
+  .win .drag{
+    position:absolute;top:8px;right:8px;color:#2E2E32;font-size:11px;line-height:1;letter-spacing:0;
+  }
+  .win.sel .drag{color:var(--accent)}
+
+  .canvas-foot{
+    display:flex;align-items:center;justify-content:space-between;
+    margin-top:12px;font-size:10.5px;letter-spacing:.06em;color:var(--dim);
+  }
+  .canvas-foot .hint{display:flex;align-items:center;gap:8px}
+  .canvas-foot kbd{
+    border:1px solid var(--line);padding:2px 5px;font-family:inherit;font-size:9.5px;color:var(--muted);
+  }
+
+  /* inspector */
+  .ins{padding:0}
+  .ins .group{padding:16px}
+  .ins .group + .group{border-top:1px solid var(--line)}
+  .ins .gh{
+    font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);
+    display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;
+  }
+  .ins .gh .swatch{width:5px;height:5px;background:var(--accent);display:inline-block;margin-right:7px;vertical-align:1px}
+  .field{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+  .field:last-child{border-bottom:0;padding-bottom:0}
+  .field .k{font-size:10.5px;color:var(--dim);letter-spacing:.06em;flex:0 0 auto}
+  .field .v{font-size:11.5px;color:var(--text);text-align:right;letter-spacing:.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .field .v.mono{font-family:ui-monospace,"SF Mono",monospace;font-size:10.5px;color:var(--muted)}
+  .field .v.dimv{color:var(--dim)}
+  .pill{
+    display:inline-block;border:1px solid var(--line);padding:1px 6px;font-size:9px;
+    letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-left:6px;vertical-align:1px;
+  }
+  .ins .inputs{display:flex;flex-direction:column;gap:10px}
+  .inp{
+    background:rgba(255,255,255,.02);border:1px solid var(--line);color:var(--text);
+    font-family:inherit;font-size:12px;padding:9px 10px;width:100%;letter-spacing:.02em;
+  }
+  .inp:focus{outline:none;border-color:var(--line-strong);background:rgba(255,255,255,.04)}
+  .inp.mono{font-family:ui-monospace,"SF Mono",monospace;font-size:10.5px;color:var(--muted)}
+  .ins .danger{
+    width:100%;background:none;border:1px solid rgba(227,25,55,.35);color:#F0687E;
+    font-family:inherit;font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+    padding:9px;cursor:pointer;transition:.16s;margin-top:4px;
+  }
+  .ins .danger:hover{border-color:var(--accent);color:#fff;background:rgba(227,25,55,.14)}
+  .note{
+    padding:14px 16px;border-top:1px solid var(--line);font-size:10.5px;line-height:1.7;
+    color:var(--dim);letter-spacing:.03em;
+  }
+  .note b{color:var(--muted);font-weight:500}
+
+  /* toggles reuse */
+  .switch{
+    width:40px;height:20px;border:1px solid var(--line-strong);background:rgba(255,255,255,.02);
+    border-radius:100px;position:relative;cursor:pointer;flex:0 0 auto;transition:.22s;padding:0;
+  }
+  .switch::after{
+    content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
+    background:var(--dim);transition:.22s cubic-bezier(.2,.8,.2,1);
+  }
+  .switch:hover{border-color:var(--muted)}
+  .switch[aria-checked="true"]{border-color:rgba(255,255,255,.55);background:rgba(255,255,255,.08)}
+  .switch[aria-checked="true"]::after{left:22px;background:var(--text)}
+
+  /* ---------- boot + journal panels ---------- */
+  .board{display:grid;grid-template-columns:1.4fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line)}
+  .board .pane-b{padding:22px 24px}
+  .board h3{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);font-weight:500;margin-bottom:8px}
+  .board p.desc{font-size:11px;color:var(--dim);line-height:1.7;margin-bottom:18px;letter-spacing:.03em}
+  .tog-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+  .tog-row:last-child{border-bottom:0}
+  .tog-row .t{font-size:12.5px}
+  .tog-row .d{font-size:10.5px;color:var(--dim);margin-top:4px;letter-spacing:.03em}
+  .tog-row .val{font-size:11px;color:var(--muted);letter-spacing:.08em;font-variant-numeric:tabular-nums}
+
+  table{width:100%;border-collapse:collapse}
+  th{
+    text-align:left;font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;
+    color:var(--dim);font-weight:500;padding:0 0 12px;border-bottom:1px solid var(--line);
+  }
+  td{padding:12px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:11.5px;letter-spacing:.02em;color:var(--muted)}
+  td.t{font-variant-numeric:tabular-nums;color:var(--dim);white-space:nowrap;padding-right:18px}
+  td.ev{color:var(--text)}
+  tr:last-child td{border-bottom:0}
+  .tag{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--ok)}
+  .tag.skip{color:var(--dim)}
+  .tag.warn{color:var(--warn)}
+
+  .hidden{display:none !important}
+
+  @media (max-width:1280px){
+    .work{grid-template-columns:250px minmax(0,1fr) 268px}
+    .strip .tail{display:none}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- RAIL -->
+  <aside class="rail">
+    <div class="brand">G</div>
+    <button title="概览">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+    </button>
+    <button title="扩展">
+      <svg viewBox="0 0 24 24"><path d="M10 3h4v4h4v4h4v4h-4v4h-4v-4H10v4H6v-4H2v-4h4V7h4z"/></svg>
+    </button>
+    <button title="外观">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg>
+    </button>
+    <button title="设备">
+      <svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13"/><path d="M8 21h8M12 17v4"/></svg>
+    </button>
+    <button class="fresh active" title="开机布局">
+      <svg viewBox="0 0 24 24"><path d="M12 17V4M6 10l6-6 6 6"/><path d="M4 20h16"/></svg>
+    </button>
+    <div class="spacer"></div>
+    <button title="设置">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-4l-.3 2.6a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 2.6h4l.3-2.6a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6c.1-.3.1-.7.1-1z"/></svg>
+    </button>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div class="wordmark">GNOUS</div>
+      <nav>
+        <a href="#" class="on" data-tab="layouts">Layouts</a>
+        <a href="#" data-tab="boot">Boot</a>
+        <a href="#" data-tab="journal">Journal</a>
+      </nav>
+      <div class="right">
+        <span><span class="dot"></span>会话已就绪</span>
+        <span>GNOME 46 · Wayland</span>
+        <span class="clock">21:04</span>
+      </div>
+    </header>
+
+    <div class="scroll">
+
+      <!-- ============ LAYOUTS ============ -->
+      <section id="tab-layouts">
+        <div class="hero">
+          <div>
+            <div class="eyebrow">Startup · 登录后自动铺开桌面</div>
+            <h1>开机布局</h1>
+            <div class="sub">勾选要参与的页面，再决定每页放哪些窗口、怎么分割。开机后由 GNOUS 逐页铺开，不再手摆。</div>
+          </div>
+          <div class="hero-actions">
+            <button class="btn">预演一遍</button>
+            <button class="btn solid">保存并应用</button>
+          </div>
+        </div>
+
+        <div class="strip">
+          <div class="cell"><span class="k">参与开机</span><span class="v" id="stat-pages">3 <em>/ 5 页</em></span></div>
+          <div class="cell"><span class="k">窗口</span><span class="v" id="stat-wins">6</span></div>
+          <div class="cell"><span class="k">显示器</span><span class="v">2 <em>DP-1 · HDMI-1</em></span></div>
+          <div class="cell"><span class="k">上次启动</span><span class="v">08:12 <em>2.6s · 全部就位</em></span></div>
+          <div class="tail" id="stat-tail">配置已保存 · 无未生效改动</div>
+        </div>
+
+        <div class="work">
+          <!-- page list -->
+          <div class="pane">
+            <div class="pane-h">
+              <span>页面 · <span id="page-count">5</span></span>
+              <button class="act" id="new-page">＋ 新建</button>
+            </div>
+            <div class="pane-b" id="page-list"></div>
+            <div class="note">
+              勾选框 = 开机是否铺开这个页面。<b>未勾选</b>的页面不会创建，也不会切过去。
+            </div>
+          </div>
+
+          <!-- canvas -->
+          <div class="pane">
+            <div class="pane-h">
+              <span id="canvas-title">01 · 监控台</span>
+              <button class="act">全屏预览 ⤢</button>
+            </div>
+            <div class="canvas-wrap">
+              <div class="canvas-bar">
+                <div class="seg" id="seg-preset">
+                  <button data-preset="solo">单窗</button>
+                  <button data-preset="equal">等分</button>
+                  <button data-preset="main">主次</button>
+                  <button data-preset="stack">上下</button>
+                  <button data-preset="grid">网格</button>
+                </div>
+                <span class="screen-id">DP-1 · 2560 × 1440 · 100%</span>
+              </div>
+              <div class="screen" id="screen"></div>
+              <div class="canvas-foot">
+                <div class="hint"><span>点击窗口选中 · 拖动手柄调整</span></div>
+                <div id="canvas-foot-right">2 窗口 · 主次分割</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- inspector -->
+          <div class="pane ins">
+            <div class="pane-h"><span>检查器</span><span style="color:#2E2E32">⌘I</span></div>
+            <div class="pane-b" id="inspector"></div>
+            <div class="note">
+              排列只存比例，不存像素：换显示器、改分辨率后按比例重算，不会挤成一团。
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ BOOT ============ -->
+      <section id="tab-boot" class="hidden">
+        <div class="hero">
+          <div>
+            <div class="eyebrow">Startup · 执行时机</div>
+            <h1>启动策略</h1>
+            <div class="sub">铺开得太早会和会话初始化抢资源，太晚则看得见窗口一个个跳出来。这里定时机与失败处理。</div>
+          </div>
+          <div class="hero-actions"><button class="btn">恢复默认</button><button class="btn solid">保存</button></div>
+        </div>
+
+        <div class="board">
+          <div class="pane">
+            <div class="pane-b">
+              <h3>时机</h3>
+              <p class="desc">先等 shell 与会话总线稳定，再开始逐页铺开；单页失败不阻塞下一页。</p>
+              <div class="tog-row"><div><div class="t">登录后延迟</div><div class="d">会话就绪后再等的秒数</div></div><span class="val">3.0 s</span></div>
+              <div class="tog-row"><div><div class="t">等待会话稳定</div><div class="d">gnome-shell 与 DBus 就绪后再开始</div></div><button class="switch" aria-checked="true" onclick="this.setAttribute('aria-checked', this.getAttribute('aria-checked')==='true'?'false':'true')"></button></div>
+              <div class="tog-row"><div><div class="t">每次登录都执行</div><div class="d">关闭则只在首次登录（新会话）时执行</div></div><button class="switch" aria-checked="true" onclick="this.setAttribute('aria-checked', this.getAttribute('aria-checked')==='true'?'false':'true')"></button></div>
+              <div class="tog-row"><div><div class="t">失败重试</div><div class="d">单页超时后重来一次，仍失败则跳过</div></div><span class="val">1 次</span></div>
+              <div class="tog-row"><div><div class="t">单页超时</div><div class="d">超过即判定失败，继续下一页</div></div><span class="val">8 s</span></div>
+            </div>
+          </div>
+
+          <div class="pane">
+            <div class="pane-b">
+              <h3>显示器</h3>
+              <p class="desc">布局按逻辑显示器存放比例；多屏时优先在指定屏幕上铺。</p>
+              <div class="tog-row"><div><div class="t">主屏优先</div><div class="d">DP-1 · 2560×1440</div></div><button class="switch" aria-checked="true" onclick="this.setAttribute('aria-checked', this.getAttribute('aria-checked')==='true'?'false':'true')"></button></div>
+              <div class="tog-row"><div><div class="t">副屏缺失时降级</div><div class="d">把副屏页面挤到主屏，而不是丢弃</div></div><button class="switch" aria-checked="true" onclick="this.setAttribute('aria-checked', this.getAttribute('aria-checked')==='true'?'false':'true')"></button></div>
+              <div class="tog-row"><div><div class="t">工作区不足时补齐</div><div class="d">GNOME 固定工作区数量 = 页面数</div></div><button class="switch" aria-checked="true" onclick="this.setAttribute('aria-checked', this.getAttribute('aria-checked')==='true'?'false':'true')"></button></div>
+              <div class="tog-row"><div><div class="t">铺开后停在哪页</div><div class="d">最后一个成功的页面</div></div><span class="val">01 · 监控台</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ JOURNAL ============ -->
+      <section id="tab-journal" class="hidden">
+        <div class="hero">
+          <div>
+            <div class="eyebrow">Startup · 08:12:03 · 今日登录</div>
+            <h1>启动日志</h1>
+            <div class="sub">每次登录的真实执行记录：哪页成功、哪页跳过了、卡在哪个窗口。</div>
+          </div>
+          <div class="hero-actions"><button class="btn">导出</button><button class="btn solid">再跑一次</button></div>
+        </div>
+
+        <div class="board">
+          <div class="pane" style="grid-column:1 / -1">
+            <div class="pane-b">
+              <table>
+                <thead><tr><th>时间</th><th>事件</th><th>详情</th><th>耗时</th></tr></thead>
+                <tbody>
+                  <tr><td class="t">08:12:03.1</td><td class="ev">会话就绪</td><td>gnome-shell 46.2 · Wayland · DBus ready</td><td class="t">1.42 s</td></tr>
+                  <tr><td class="t">08:12:04.5</td><td class="ev">页面 01 · 监控台</td><td>Vitals · Processes — 2 窗口就位</td><td class="t">0.42 s</td></tr>
+                  <tr><td class="t">08:12:04.9</td><td class="ev">页面 02 · 开发</td><td>Code · Terminal · Firefox — 3 窗口就位</td><td class="t">0.61 s</td></tr>
+                  <tr><td class="t">08:12:05.5</td><td class="ev">页面 03 · 写作</td><td>Obsidian — 1 窗口就位</td><td class="t">0.24 s</td></tr>
+                  <tr><td class="t">08:12:05.8</td><td class="ev">页面 04 · 会议</td><td><span class="tag skip">跳过</span> 未参与开机启动</td><td class="t">—</td></tr>
+                  <tr><td class="t">08:12:05.8</td><td class="ev">页面 05 · 备用</td><td><span class="tag skip">跳过</span> 未参与开机启动</td><td class="t">—</td></tr>
+                  <tr><td class="t">08:12:05.9</td><td class="ev">完成</td><td><span class="tag">全部就位</span> 3 页 / 6 窗口 · 无重试</td><td class="t">2.62 s</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<script>
+  /* ---------------- data ---------------- */
+  const DISPLAY = { w: 2560, h: 1440, id: 'DP-1' };
+
+  const pages = [
+    {
+      id:'p1', name:'监控台', boot:true, dir:'col', ratios:[0.62,0.38],
+      wins:[
+        { app:'Vitals', tag:'VT', src:'GNOME 扩展', cmd:'gnome-extensions enable vitals@corentin', role:'maximized', delay:0 },
+        { app:'Processes', tag:'PS', src:'GNOUS 面板', cmd:'gnous --page processes --view live', role:'normal', delay:300 }
+      ]
+    },
+    {
+      id:'p2', name:'开发', boot:true, dir:'col', ratios:[0.50,0.26,0.24],
+      wins:[
+        { app:'Code', tag:'CD', src:'应用', cmd:'code ~/work/gnous', role:'normal', delay:0 },
+        { app:'Terminal', tag:'TM', src:'应用', cmd:'kgx --working-directory ~/work', role:'normal', delay:150 },
+        { app:'Firefox', tag:'FF', src:'应用', cmd:'firefox --new-window localhost:4790', role:'normal', delay:400 }
+      ]
+    },
+    {
+      id:'p3', name:'写作', boot:true, dir:'col', ratios:[1],
+      wins:[
+        { app:'Obsidian', tag:'OB', src:'应用', cmd:'obsidian --vault notes', role:'maximized', delay:0 }
+      ]
+    },
+    {
+      id:'p4', name:'会议', boot:false, dir:'grid', ratios:[0.5,0.5], rows:[0.5,0.5],
+      wins:[
+        { app:'Meet', tag:'MT', src:'应用', cmd:'firefox --new-window meet.google.com', role:'normal', delay:0 },
+        { app:'Notes', tag:'NT', src:'GNOUS 面板', cmd:'gnous --page notes', role:'normal', delay:200 },
+        { app:'Chat', tag:'CH', src:'应用', cmd:'element-desktop', role:'normal', delay:300 },
+        { app:'Calendar', tag:'CA', src:'GNOME 日历', cmd:'gnome-calendar', role:'normal', delay:400 }
+      ]
+    },
+    {
+      id:'p5', name:'备用', boot:false, dir:'col', ratios:[0.5,0.5],
+      wins:[
+        { app:'Files', tag:'FI', src:'应用', cmd:'nautilus ~/Downloads', role:'normal', delay:0 },
+        { app:'Music', tag:'MU', src:'应用', cmd:'spotify', role:'normal', delay:500 }
+      ]
+    }
+  ];
+
+  const state = { page:'p1', win:0 };
+
+  /* ---------------- helpers ---------------- */
+  const $ = s => document.querySelector(s);
+  const current = () => pages.find(p => p.id === state.page);
+
+  const PRESET_LABEL = { solo:'单窗', equal:'等分', main:'主次分割', stack:'上下分割', grid:'四宫格' };
+
+  function presetOf(p){
+    if (p.dir === 'grid') return 'grid';
+    if (p.dir === 'row') return 'stack';
+    const n = p.wins.length;
+    if (n === 1) return 'solo';
+    const first = p.ratios[0];
+    if (Math.abs(first - 1/n) < 0.02) return 'equal';
+    return 'main';
+  }
+
+  function applyPreset(p, key){
+    const n = p.wins.length;
+    if (n === 0) return;
+    if (key === 'solo' && n === 1){ p.dir='col'; p.ratios=[1]; }
+    if (key === 'equal'){ p.dir='col'; p.ratios = Array(n).fill(1/n); }
+    if (key === 'main' && n >= 2){
+      const first = 0.5 + 0.12 * (n - 1);   // 2 窗 → 62/38，3 窗 → 56/22/22
+      p.dir = 'col';
+      p.ratios = [first, ...Array(n-1).fill((1-first)/(n-1))];
+    }
+    if (key === 'stack'){ p.dir='row'; p.ratios = Array(n).fill(1/n); }
+    if (key === 'grid' && n === 4){ p.dir='grid'; p.ratios=[0.5,0.5]; p.rows=[0.5,0.5]; }
+  }
+
+  function rects(p){
+    const n = p.wins.length;
+    const out = [];
+    if (!n) return out;
+    if (p.dir === 'grid' && n === 4){
+      const cols = p.ratios, rows = p.rows || [0.5,0.5];
+      let y = 0;
+      for (let r = 0; r < 2; r++){
+        let x = 0;
+        for (let c = 0; c < 2; c++){
+          const w = DISPLAY.w * cols[c], h = DISPLAY.h * rows[r];
+          out.push({ x, y, w, h });
+          x += w;
+        }
+        y += DISPLAY.h * rows[r];
+      }
+      return out;
+    }
+    if (p.dir === 'row'){
+      let y = 0;
+      p.ratios.forEach(r => { const h = DISPLAY.h * r; out.push({ x:0, y, w:DISPLAY.w, h }); y += h; });
+      return out;
+    }
+    let x = 0;
+    p.ratios.forEach(r => { const w = DISPLAY.w * r; out.push({ x, y:0, w, h:DISPLAY.h }); x += w; });
+    return out;
+  }
+
+  /* ---------------- render: page list ---------------- */
+  function renderList(){
+    const list = $('#page-list');
+    list.innerHTML = pages.map((p, i) => {
+      const mini = miniBars(p);
+      return `
+      <div class="page-row ${p.id === state.page ? 'on' : ''} ${p.boot ? '' : 'skipped'}" data-id="${p.id}">
+        <button class="chk" aria-checked="${p.boot}" data-chk="${p.id}" title="开机是否铺开">
+          <svg viewBox="0 0 10 10"><path d="M2 5.4l2.1 2.1L8 3"/></svg>
+        </button>
+        <div class="meta">
+          <div class="n"><span class="idx">${String(i+1).padStart(2,'0')}</span>${p.name}</div>
+          <div class="m">${p.wins.length} 窗口 · ${PRESET_LABEL[presetOf(p)]}</div>
+        </div>
+        <div class="mini" style="${mini.area}">${mini.html}</div>
+      </div>`;
+    }).join('');
+    $('#page-count').textContent = pages.length;
+    $('#stat-pages').innerHTML = `${pages.filter(p=>p.boot).length} <em>/ ${pages.length} 页</em>`;
+    $('#stat-wins').textContent = pages.filter(p=>p.boot).reduce((a,p)=>a+p.wins.length,0);
+  }
+
+  function miniBars(p){
+    const n = p.wins.length;
+    if (!n) return { area:'grid-template-columns:1fr', html:'' };
+    const cells = Array.from({length:Math.min(n,4)}, (_,i) => `<i class="${i===0?'hot':''}"></i>`).join('');
+    if (p.dir === 'grid') return { area:'grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr', html:cells };
+    if (p.dir === 'row') return { area:`grid-template-rows:repeat(${Math.min(n,4)},1fr)`, html:cells };
+    return { area:`grid-template-columns:${Array(Math.min(n,4)).fill('1fr').join(' ')}`, html:cells };
+  }
+
+  /* ---------------- render: canvas ---------------- */
+  function renderCanvas(){
+    const p = current();
+    const screen = $('#screen');
+    const idx = pages.findIndex(x => x.id === p.id);
+    $('#canvas-title').textContent = `${String(idx+1).padStart(2,'0')} · ${p.name}`;
+
+    // preset buttons
+    document.querySelectorAll('#seg-preset button').forEach(b => {
+      const key = b.dataset.preset;
+      const active = presetOf(p) === key;
+      b.classList.toggle('on', active);
+      const ok = key === 'solo' ? p.wins.length === 1
+              : key === 'grid' ? p.wins.length === 4
+              : key === 'main' ? p.wins.length >= 2
+              : key === 'equal' || key === 'stack' ? p.wins.length >= 1 : false;
+      b.disabled = !ok;
+    });
+
+    if (!p.wins.length){
+      screen.classList.add('empty');
+      screen.style.display = 'grid';
+      screen.style.gridTemplateColumns = '';
+      screen.style.gridTemplateRows = '';
+      screen.innerHTML = `<div class="empty-msg">这一页还是空的<br>加个窗口，开机时它会自己开好</div>`;
+      $('#canvas-foot-right').textContent = '0 窗口 · 空白页';
+      return;
+    }
+    screen.classList.remove('empty');
+
+    const g = rects(p);
+    screen.style.display = 'grid';
+    if (p.dir === 'grid'){
+      screen.style.gridTemplateColumns = p.ratios.map(r => `${r}fr`).join(' ');
+      screen.style.gridTemplateRows = (p.rows||[0.5,0.5]).map(r => `${r}fr`).join(' ');
+    } else if (p.dir === 'row'){
+      screen.style.gridTemplateColumns = '1fr';
+      screen.style.gridTemplateRows = p.ratios.map(r => `${r}fr`).join(' ');
+    } else {
+      screen.style.gridTemplateColumns = p.ratios.map(r => `${r}fr`).join(' ');
+      screen.style.gridTemplateRows = '1fr';
+    }
+
+    screen.innerHTML = p.wins.map((w, i) => {
+      const r = g[i];
+      const sel = (i === state.win) ? 'sel' : '';
+      return `
+      <div class="win ${sel}" data-win="${i}">
+        <div class="top">
+          <span class="badge">${w.tag}</span>
+          <span class="name">${w.app}</span>
+          <span class="role">${w.role}</span>
+        </div>
+        <div class="cmd">${w.cmd}</div>
+        <div class="geo"><b>${Math.round(r.w)}×${Math.round(r.h)}</b><span>x ${Math.round(r.x)} · y ${Math.round(r.y)}</span></div>
+        <span class="drag">⠿</span>
+      </div>`;
+    }).join('');
+
+    $('#canvas-foot-right').textContent = `${p.wins.length} 窗口 · ${PRESET_LABEL[presetOf(p)]}`;
+  }
+
+  /* ---------------- render: inspector ---------------- */
+  function renderInspector(){
+    const p = current();
+    const box = $('#inspector');
+
+    if (!p.wins.length){
+      box.innerHTML = `
+        <div class="group">
+          <div class="gh"><span><span class="swatch"></span>页面</span></div>
+          <div class="inputs">
+            <input class="inp" value="${p.name}">
+            <input class="inp mono" value="gnome-workspace://${String(pages.findIndex(x=>x.id===p.id)+1).padStart(2,'0')}" readonly>
+          </div>
+        </div>
+        <div class="group">
+          <div class="field"><span class="k">参与开机</span><span class="v">${p.boot ? '是' : '否'}</span></div>
+          <div class="field"><span class="k">窗口</span><span class="v dimv">无</span></div>
+        </div>
+        <div class="note" style="border-top:1px solid var(--line)">空白页也可以是开机页 —— 铺开只为占个工作区，窗口稍后自己开。</div>`;
+      return;
+    }
+
+    const w = p.wins[state.win] || p.wins[0];
+    const r = rects(p)[state.win] || { x:0, y:0, w:0, h:0 };
+    const winIndex = p.wins.findIndex(x => x === w);
+
+    box.innerHTML = `
+      <div class="group">
+        <div class="gh"><span><span class="swatch"></span>窗口 ${String(winIndex+1).padStart(2,'0')}</span><span style="color:#2E2E32">/ ${p.wins.length}</span></div>
+        <div class="field"><span class="k">应用</span><span class="v">${w.app}<span class="pill">${w.src}</span></span></div>
+        <div class="field"><span class="k">启动命令</span></div>
+        <input class="inp mono" value="${w.cmd}">
+        <div class="field" style="margin-top:10px"><span class="k">窗口状态</span><span class="v">${w.role}</span></div>
+        <div class="field"><span class="k">启动延迟</span><span class="v">${w.delay} ms</span></div>
+        <div class="field"><span class="k">几何（按比例换算）</span><span class="v mono">x ${Math.round(r.x)} y ${Math.round(r.y)} · ${Math.round(r.w)}×${Math.round(r.h)}</span></div>
+        <div class="field"><span class="k">归属页面</span><span class="v">${p.name}</span></div>
+        <button class="danger">移除此窗口</button>
+      </div>
+      <div class="group">
+        <div class="gh"><span>页面</span></div>
+        <div class="inputs">
+          <input class="inp" value="${p.name}">
+          <input class="inp mono" value="gnome-workspace://${String(pages.findIndex(x=>x.id===p.id)+1).padStart(2,'0')}" readonly>
+        </div>
+        <div class="field" style="margin-top:12px"><span class="k">参与开机</span><span class="v">${p.boot ? '是' : '否'}</span></div>
+        <div class="field"><span class="k">排列</span><span class="v">${PRESET_LABEL[presetOf(p)]}</span></div>
+        <div class="field"><span class="k">显示器</span><span class="v">${DISPLAY.id}</span></div>
+        <div class="field"><span class="k">比例</span><span class="v mono">${p.ratios.map(x=>Math.round(x*100)).join(' : ')}</span></div>
+      </div>`;
+  }
+
+  function renderAll(){
+    renderList();
+    renderCanvas();
+    renderInspector();
+  }
+
+  /* ---------------- events ---------------- */
+  $('#page-list').addEventListener('click', e => {
+    const chk = e.target.closest('[data-chk]');
+    if (chk){
+      e.stopPropagation();
+      const p = pages.find(x => x.id === chk.dataset.chk);
+      p.boot = !p.boot;
+      renderAll();
+      $('#stat-tail').textContent = '有未保存的改动';
+      return;
+    }
+    const row = e.target.closest('.page-row');
+    if (!row) return;
+    state.page = row.dataset.id;
+    state.win = 0;
+    renderAll();
+  });
+
+  $('#screen').addEventListener('click', e => {
+    const win = e.target.closest('.win');
+    if (!win) return;
+    state.win = Number(win.dataset.win);
+    renderCanvas();
+    renderInspector();
+  });
+
+  $('#seg-preset').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b || b.disabled) return;
+    const p = current();
+    applyPreset(p, b.dataset.preset);
+    state.win = 0;
+    renderAll();
+    $('#stat-tail').textContent = '有未保存的改动';
+  });
+
+  $('#new-page').addEventListener('click', () => {
+    const n = pages.length + 1;
+    pages.push({ id:'p'+n, name:'新页面 '+n, boot:false, dir:'col', ratios:[1], wins:[] });
+    state.page = 'p'+n; state.win = 0;
+    renderAll();
+  });
+
+  document.querySelectorAll('nav a').forEach(a => {
+    a.addEventListener('click', e => {
+      e.preventDefault();
+      document.querySelectorAll('nav a').forEach(x => x.classList.remove('on'));
+      a.classList.add('on');
+      const tab = a.dataset.tab;
+      ['layouts','boot','journal'].forEach(t => {
+        document.getElementById('tab-'+t).classList.toggle('hidden', t !== tab);
+      });
+    });
+  });
+
+  document.querySelectorAll('.rail button').forEach(b => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('.rail button').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+    });
+  });
+
+  const clock = document.querySelector('.clock');
+  const tick = () => {
+    const d = new Date();
+    clock.textContent = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+  };
+  tick(); setInterval(tick, 20000);
+
+  renderAll();
+</script>
+</body>
+</html>

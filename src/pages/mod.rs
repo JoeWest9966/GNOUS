@@ -7,3 +7,4 @@
 pub mod gnome_fixes;
 pub mod processes;
 pub mod root_align;
+pub mod startup_layouts;

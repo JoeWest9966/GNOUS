@@ -6,6 +6,7 @@ mod proc;
 mod registry;
 mod root_align;
 mod scroll;
+mod startup;
 mod sys;
 mod table_state;
 mod theme;
@@ -156,6 +157,8 @@ pub(crate) struct App {
     fixes_apply_armed: bool,
     /// State of the root-align diagnostic console.
     root_align: root_align::State,
+    /// Startup layouts: pages, splits and the boot policy (JSON-backed).
+    startup: startup::State,
     /// UUID of the extension whose details are open in the right panel.
     selected: Option<String>,
     /// Last provider failure, shown inside the detail panel.
@@ -253,6 +256,7 @@ impl App {
             fixes_checked: sys::local_clock(),
             fixes_apply_armed: false,
             root_align: root_align::State::new(),
+            startup: startup::State::load(),
             selected: None,
             error: None,
             nav: Nav::default(),
@@ -717,6 +721,109 @@ impl App {
         self.extensions = self.provider.list();
         cx.notify();
     }
+
+    // ---- startup-layouts -------------------------------------------------
+
+    pub(crate) fn startup_toggle_boot(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.startup.toggle_boot(id);
+        self.startup.persist();
+        cx.notify();
+    }
+
+    pub(crate) fn startup_select_page(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.startup.select(id);
+        cx.notify();
+    }
+
+    pub(crate) fn startup_select_window(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.startup.select_window(index);
+        cx.notify();
+    }
+
+    pub(crate) fn startup_preset(&mut self, preset: startup::Preset, cx: &mut Context<Self>) {
+        if self.startup.apply_preset(preset) {
+            self.startup.persist();
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn startup_new_page(&mut self, cx: &mut Context<Self>) {
+        self.startup.new_page();
+        self.startup.persist();
+        cx.notify();
+    }
+
+    pub(crate) fn startup_remove_window(&mut self, cx: &mut Context<Self>) {
+        if self.startup.remove_selected_window() {
+            self.startup.persist();
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn startup_toggle_option(
+        &mut self,
+        option: startup::BootOption,
+        cx: &mut Context<Self>,
+    ) {
+        self.startup.toggle_option(option);
+        self.startup.persist();
+        cx.notify();
+    }
+
+    pub(crate) fn startup_step(
+        &mut self,
+        stepper: startup::Stepper,
+        up: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.startup.step(stepper, up);
+        self.startup.persist();
+        cx.notify();
+    }
+
+    pub(crate) fn startup_pick_display(&mut self, name: &str, cx: &mut Context<Self>) {
+        self.startup.layout.boot.primary_display = name.to_string();
+        self.startup.note = Some(format!("铺开屏 → {name}"));
+        self.startup.persist();
+        cx.notify();
+    }
+
+    pub(crate) fn startup_recheck_displays(&mut self, cx: &mut Context<Self>) {
+        self.startup.displays = startup::displays();
+        if self.startup.layout.boot.primary_display.is_empty() {
+            if let Some(display) = self.startup.displays.first() {
+                self.startup.layout.boot.primary_display = display.name.clone();
+            }
+        }
+        self.startup.note = Some(match self.startup.displays.first() {
+            Some(display) => format!(
+                "探测到 {} 个显示器 · {} · {}×{}",
+                self.startup.displays.len(),
+                display.name,
+                display.width,
+                display.height
+            ),
+            None => "未探测到已连接显示器".to_string(),
+        });
+        cx.notify();
+    }
+
+    pub(crate) fn startup_preview(&mut self, cx: &mut Context<Self>) {
+        self.startup.run_preview();
+        cx.notify();
+    }
+
+    pub(crate) fn startup_save(&mut self, cx: &mut Context<Self>) {
+        self.startup.persist();
+        if self.startup.error.is_none() {
+            self.startup.note = Some(format!(
+                "已保存 · {} · {}",
+                self.startup.saved_at,
+                startup::State::path().display()
+            ));
+        }
+        cx.notify();
+    }
 }
 
 impl Render for App {
@@ -811,6 +918,7 @@ impl Render for App {
                             fixes_checked: &self.fixes_checked,
                             fixes_apply_armed: self.fixes_apply_armed,
                             root_align: &self.root_align,
+                            startup: &self.startup,
                             content_led: &self.content_led,
                             table_led: &self.table_led,
                         },
@@ -846,6 +954,7 @@ enum Section {
     Extensions,
     Appearance,
     Devices,
+    Startup,
     Power,
 }
 
@@ -855,6 +964,7 @@ impl Section {
         Section::Extensions,
         Section::Appearance,
         Section::Devices,
+        Section::Startup,
         Section::Power,
     ];
 
@@ -864,7 +974,8 @@ impl Section {
             Section::Extensions => 1,
             Section::Appearance => 2,
             Section::Devices => 3,
-            Section::Power => 4,
+            Section::Startup => 4,
+            Section::Power => 5,
         }
     }
 
@@ -874,6 +985,7 @@ impl Section {
             Section::Extensions => icons::PUZZLE,
             Section::Appearance => icons::SUN,
             Section::Devices => icons::MONITOR,
+            Section::Startup => icons::STARTUP,
             Section::Power => icons::POWER,
         }
     }
@@ -885,6 +997,7 @@ impl Section {
             Section::Extensions => "extensions",
             Section::Appearance => "appearance",
             Section::Devices => "devices",
+            Section::Startup => "startup",
             Section::Power => "power",
         }
     }
@@ -897,6 +1010,7 @@ impl Section {
             Section::Extensions => vec![PageRef::INSTALLED],
             Section::Appearance => vec![PageRef::APPEARANCE],
             Section::Devices => vec![PageRef::DEVICES],
+            Section::Startup => Vec::new(),
             Section::Power => vec![PageRef::POWER],
         };
         let mut pages = core;
@@ -906,6 +1020,9 @@ impl Section {
                 view: view.id.as_str(),
                 label: view.label.as_str(),
             });
+        }
+        if pages.is_empty() {
+            pages.push(PageRef::PENDING);
         }
         pages
     }
@@ -945,6 +1062,13 @@ impl PageRef {
         plugin: "core",
         view: "power",
         label: "Power",
+    };
+    /// A section whose plugin contributed no views: draw an honest placeholder
+    /// instead of hard-coding an extension name here.
+    const PENDING: PageRef = PageRef {
+        plugin: "core",
+        view: "pending",
+        label: "Pending",
     };
 }
 
@@ -1226,6 +1350,8 @@ pub(crate) struct Overview<'a> {
     pub(crate) fixes_apply_armed: bool,
     /// Verbatim stdout and parsed state of the root-align console.
     pub(crate) root_align: &'a root_align::State,
+    /// Startup layouts model + probes.
+    pub(crate) startup: &'a startup::State,
     pub(crate) content_led: &'a scroll::Led,
     pub(crate) table_led: &'a scroll::Led,
 }
@@ -1239,6 +1365,7 @@ fn content(overview: &Overview, cx: &mut Context<App>) -> impl IntoElement {
         ("processes", view) => pages::processes::body(view, overview, &weak),
         ("gnome-fixes", _) => pages::gnome_fixes::body(overview, &weak),
         ("root-align", _) => pages::root_align::body(overview, &weak),
+        ("startup-layouts", view) => pages::startup_layouts::body(view, overview, &weak),
         (_, label) => placeholder(label),
     };
     // The table owns its scroller below the header; every other page keeps the

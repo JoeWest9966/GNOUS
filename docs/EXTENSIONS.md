@@ -92,6 +92,11 @@ default = true
 | `processes` | 页面级 | Overview 分区下的 5 个视图：Table / Live / Memory / Tree / Groups |
 | `gnome-fixes` | 页面级 | Extensions 分区下的 Fixes：把 `/home/root/GNOME/` 的 5 个小补丁收成一处，统一「体检 / 应用 / 回退」，状态来自外部工具的真实输出 |
 | `root-align` | 页面级 | Extensions 分区下的 Align：C 方案诊断台，8 个 systemd 用户单元按功能域分组，`status` / `doctor` / 动作 stdout 原样展示；复用 `GNOUS_FIXES_ROOT` |
+| `startup-layouts` | 页面级 | 左列独立分区 Startup，三个视图 Layouts / Boot / Journal：勾选开机铺开的页面、按比例排列窗口、配置启动策略 |
+
+`startup-layouts` 的配置存在 `$XDG_CONFIG_HOME/gnous/startup.json`（缺省 `~/.config/gnous/startup.json`），
+每次改动立即写盘；「预演一遍」只做可证明的事——把每个启动命令拿到 `PATH` 里解析，找不到就显示找不到。
+真正开窗的执行器尚未实现，所以「上次启动」「启动日志」保持空态，不填演示数据。
 
 `GNOUS_FIXES_ROOT` 可覆盖工具根目录（默认 `/home/root/GNOME`）；工具缺失时显示失败原因，不伪造状态。
 带副作用的外部命令一律二次确认，危险 flags（`--now` / `--restart` / `--run --yes`）不从 UI 触发。

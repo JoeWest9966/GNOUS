@@ -69,6 +69,10 @@ const MANIFESTS: &[(&str, &str)] = &[
         "extensions/root-align/manifest.toml",
         include_str!("../extensions/root-align/manifest.toml"),
     ),
+    (
+        "extensions/startup-layouts/manifest.toml",
+        include_str!("../extensions/startup-layouts/manifest.toml"),
+    ),
 ];
 
 static CACHE: OnceLock<Vec<Manifest>> = OnceLock::new();
@@ -138,6 +142,22 @@ mod tests {
         );
         assert_eq!(align.views.len(), 1);
         assert_eq!(align.views[0].id, "align");
+        let startup = all
+            .iter()
+            .find(|m| m.id == "startup-layouts")
+            .expect("startup-layouts");
+        assert_eq!(
+            startup.nav.as_ref().map(|n| n.section.as_str()),
+            Some("startup")
+        );
+        assert_eq!(
+            startup
+                .views
+                .iter()
+                .map(|v| v.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["layouts", "boot", "journal"]
+        );
     }
 
     #[test]
@@ -149,5 +169,6 @@ mod tests {
         assert_eq!(extensions.len(), 2);
         assert_eq!(extensions[0].1.id, "fixes");
         assert_eq!(extensions[1].1.id, "align");
+        assert_eq!(views_for("startup").len(), 3);
     }
 }

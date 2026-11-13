@@ -1,0 +1,24 @@
+id = "startup-layouts"
+name = "开机布局"
+summary = "开机自动铺开若干桌面页面：每页放哪些窗口、怎么分割，按比例保存，换分辨率自动重算"
+version = "0.1.0"
+capabilities = ["page"]
+icon = "arrow-up-to-line"
+
+# 页面级扩展：左列 rail 的独立分区，不与 Overview / Extensions 共用
+[nav]
+label = "Startup"
+section = "startup"
+order = 40
+
+[[views]]
+id = "layouts"
+label = "Layouts"
+
+[[views]]
+id = "boot"
+label = "Boot"
+
+[[views]]
+id = "journal"
+label = "Journal"
