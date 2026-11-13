@@ -197,12 +197,18 @@ impl App {
             .spawn(async move { fixes::run(id, action) });
         cx.spawn(async move |_, cx| {
             let outcome = task.await;
+            let recheck = outcome.ok && outcome.action != fixes::Action::Check;
             let _ = weak.update(cx, |app: &mut App, cx| {
                 if let Some(state) = app.fixes.iter_mut().find(|state| state.id == id) {
                     state.absorb(outcome);
                 }
                 app.fixes_checked = sys::local_clock();
                 cx.notify();
+                // Apply/revert output is not a status probe: immediately run
+                // `check` again so the row reflects what the system accepted.
+                if recheck {
+                    app.run_fix(id, fixes::Action::Check, cx);
+                }
             });
             cx.refresh();
         })
@@ -227,17 +233,18 @@ impl App {
             return;
         }
         self.fixes_apply_armed = false;
+        // Only rows a real probe marked `待处理` may be applied. `未体检`
+        // is never guessed at: run「全部体检」first.
         let pending: Vec<&'static str> = self
             .fixes
             .iter()
-            .filter(|state| {
-                matches!(
-                    state.status,
-                    fixes::Status::Attention | fixes::Status::Unknown
-                )
-            })
+            .filter(|state| state.status == fixes::Status::Attention)
             .map(|state| state.id)
             .collect();
+        if pending.is_empty() {
+            cx.notify();
+            return;
+        }
         for id in pending {
             self.run_fix(id, fixes::Action::Apply, cx);
         }
