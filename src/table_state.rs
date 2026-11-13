@@ -561,6 +561,11 @@ mod tests {
             rss_kb: mem,
             threads: 1,
             age_secs: 0,
+            rss_anon_kb: mem,
+            rss_file_kb: 0,
+            rss_shmem_kb: 0,
+            swap_kb: 0,
+            vm_peak_kb: mem,
             history: Vec::new(),
         }
     }

@@ -50,6 +50,57 @@ pub struct Snapshot {
     pub intr_rate: f64,
     /// Processes currently runnable (`procs_running`).
     pub procs_running: u32,
+    /// Where physical memory actually went, in `kB`.
+    pub memory: MemoryBreakdown,
+}
+
+/// Physical memory, split the way `free` splits it so the parts always close.
+///
+/// Summing `meminfo` fields such as `AnonPages + Cached + Slab` does **not**
+/// add up to `MemTotal` on a real kernel: `Cached` already contains `Shmem`,
+/// and several kernel allocations have no field of their own. The only split
+/// that closes by definition is `used = MemTotal - MemAvailable`, so that is
+/// the split the bar shows. The finer breakdown below is presented as the
+/// composition of *used*, with whatever the kernel does not break out left in
+/// `other_kb` instead of being folded into a neighbour.
+pub struct MemoryBreakdown {
+    pub total_kb: u64,
+    /// `MemTotal - MemAvailable`, exactly what `free` calls `used`.
+    pub used_kb: u64,
+    /// `MemAvailable - MemFree`: page cache the kernel can drop on demand.
+    pub reclaimable_kb: u64,
+    /// `MemFree`.
+    pub free_kb: u64,
+    pub available_kb: u64,
+
+    /// Composition of `used_kb`.
+    pub anon_kb: u64,
+    pub shmem_kb: u64,
+    pub slab_kb: u64,
+    pub stack_kb: u64,
+    pub swap_cached_kb: u64,
+    /// System RAM the GPU driver has claimed (amdgpu GTT + VRAM). On an
+    /// integrated GPU this is real memory that `meminfo` does not report,
+    /// which is exactly where a missing gigabyte usually hides.
+    pub gpu_kb: u64,
+    /// Part of `used_kb` the kernel does not expose as a field.
+    pub other_kb: u64,
+
+    pub swap_total_kb: u64,
+    pub swap_used_kb: u64,
+    /// `Dirty` + `Writeback`: written but not yet on disk.
+    pub dirty_kb: u64,
+}
+
+impl MemoryBreakdown {
+    /// Share of `MemTotal` occupied by `kb`, clamped for layout maths.
+    pub fn frac(&self, kb: u64) -> f32 {
+        if self.total_kb == 0 {
+            0.
+        } else {
+            (kb as f32 / self.total_kb as f32).clamp(0., 1.)
+        }
+    }
 }
 
 /// Samples the machine. Cheap to construct once, then [`Probe::sample`] each
@@ -133,6 +184,7 @@ impl Probe {
         let (down, up) = self.net_rate();
         let temp = self.temperature();
         let (cores, ctxt_rate, intr_rate, procs_running) = self.live_cpu();
+        let memory = memory_breakdown();
 
         let headline = if disk_fill >= 0.9 {
             "存储空间告急"
@@ -194,6 +246,7 @@ impl Probe {
             ctxt_rate,
             intr_rate,
             procs_running,
+            memory,
         }
     }
 
@@ -404,6 +457,77 @@ fn meminfo_kb(key: &str) -> Option<u64> {
         .and_then(|v| v.parse().ok())
 }
 
+/// Reads the fields that make up [`MemoryBreakdown`] in one pass.
+fn memory_breakdown() -> MemoryBreakdown {
+    let info = read("/proc/meminfo").unwrap_or_default();
+    let get = |key: &str| -> u64 {
+        info.lines()
+            .find(|l| l.starts_with(key) && l.as_bytes().get(key.len()) == Some(&b':'))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+    };
+    let total_kb = get("MemTotal");
+    let free_kb = get("MemFree");
+    let available_kb = get("MemAvailable").min(total_kb);
+    let used_kb = total_kb.saturating_sub(available_kb);
+    let reclaimable_kb = available_kb.saturating_sub(free_kb);
+
+    let anon_kb = get("AnonPages");
+    let shmem_kb = get("Shmem");
+    let slab_kb = get("SUnreclaim");
+    let stack_kb = get("KernelStack") + get("PageTables");
+    let swap_cached_kb = get("SwapCached");
+    // The GPU claims system RAM that `meminfo` never reports, but its own
+    // counters can overlap each other (VRAM may be carved from GTT), so it is
+    // only credited with what is actually left of `used`. Without that clamp
+    // the composition would overshoot and `other_kb` would go negative.
+    let detailed = anon_kb + shmem_kb + slab_kb + stack_kb + swap_cached_kb;
+    let unaccounted = used_kb.saturating_sub(detailed);
+    let gpu_kb = gpu_memory_kb().min(unaccounted);
+    MemoryBreakdown {
+        total_kb,
+        used_kb,
+        reclaimable_kb,
+        free_kb,
+        available_kb,
+        anon_kb,
+        shmem_kb,
+        slab_kb,
+        stack_kb,
+        swap_cached_kb,
+        gpu_kb,
+        other_kb: unaccounted - gpu_kb,
+        swap_total_kb: get("SwapTotal"),
+        swap_used_kb: get("SwapTotal").saturating_sub(get("SwapFree")),
+        dirty_kb: get("Dirty") + get("Writeback"),
+    }
+}
+
+/// System RAM claimed by the GPU driver, in `kB`.
+///
+/// amdgpu exposes `mem_info_gtt_used` (system RAM mapped for the GPU) and
+/// `mem_info_vram_used` (the carve-out) under each DRM card. Drivers without
+/// these files simply report nothing rather than a guess.
+fn gpu_memory_kb() -> u64 {
+    let mut total = 0u64;
+    let Ok(entries) = std::fs::read_dir("/sys/class/drm") else {
+        return 0;
+    };
+    for entry in entries.flatten() {
+        let device = entry.path().join("device");
+        for file in ["mem_info_gtt_used", "mem_info_vram_used"] {
+            let Ok(raw) = std::fs::read_to_string(device.join(file)) else {
+                continue;
+            };
+            if let Ok(bytes) = raw.trim().parse::<u64>() {
+                total += bytes / 1024;
+            }
+        }
+    }
+    total
+}
+
 /// `(used, total)` bytes for the filesystem holding `path`.
 fn disk_usage(path: &str) -> Option<(u64, u64)> {
     let c_path = CString::new(path).ok()?;
@@ -607,6 +731,33 @@ fn desktop_version() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn memory_breakdown_closes_on_used() {
+        let mem = memory_breakdown();
+        if mem.total_kb == 0 {
+            return; // /proc/meminfo unavailable
+        }
+        // The three bar segments close by definition: this is what makes the
+        // composition trustworthy instead of decorative.
+        assert_eq!(
+            mem.used_kb + mem.reclaimable_kb + mem.free_kb,
+            mem.total_kb,
+            "bar segments must add up to MemTotal"
+        );
+        assert!(mem.available_kb <= mem.total_kb);
+        assert!(mem.swap_used_kb <= mem.swap_total_kb);
+        // The finer split is a composition of `used`, so it can only describe
+        // at most that much memory.
+        let detailed = mem.anon_kb
+            + mem.shmem_kb
+            + mem.slab_kb
+            + mem.stack_kb
+            + mem.swap_cached_kb
+            + mem.gpu_kb
+            + mem.other_kb;
+        assert_eq!(detailed, mem.used_kb, "used composition must close");
+    }
 
     #[test]
     fn probe_reports_plausible_values() {

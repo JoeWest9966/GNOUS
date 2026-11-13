@@ -15,6 +15,7 @@ mod table_state;
 mod theme;
 mod toggles;
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use root_align::Action as RootAlignAction;
@@ -146,6 +147,18 @@ pub(crate) struct App {
     core_history: Vec<Vec<f32>>,
     /// Chart window on the CPU view, in samples (labels map to wall-clock).
     cpu_window: usize,
+    /// Memory view: free-text filter over process names and PIDs.
+    mem_query: String,
+    /// Memory view: which processes to include, same semantics as the Table.
+    mem_scope: table_state::Scope,
+    /// Memory view: merge processes that share a name into one block.
+    mem_group: bool,
+    /// Per-pid RSS delta plus when it was seen, for the growth badge.
+    mem_growth: HashMap<u32, (i64, Instant)>,
+    /// Last frame's RSS, the baseline for `mem_growth`.
+    mem_prev_rss: HashMap<u32, u64>,
+    /// `smaps_rollup` of the selected process, read on selection only.
+    mem_smaps: Option<(u32, proc::Smaps)>,
     proc_selected: Option<u32>,
     /// Pending signal awaiting the confirmation dialog.
     proc_dialog: Option<ProcDialog>,
@@ -200,6 +213,11 @@ const EXTENSION_TICKS: u32 = 100;
 /// process plugin's own cadence, so the wall-clock span depends on the
 /// selected refresh rate (0.5s → 1 min, 5s → 10 min).
 const CPU_HISTORY: usize = 120;
+
+/// Memory growth badge: a real RSS jump of this size is worth flagging.
+const MEM_GROWTH_KB: i64 = 50 * 1024;
+/// How long a growth badge stays on screen after it is detected.
+const MEM_GROWTH_TTL: Duration = Duration::from_secs(4);
 
 impl App {
     fn new(cx: &mut Context<Self>) -> Self {
@@ -291,6 +309,12 @@ impl App {
             cpu_history: Vec::new(),
             core_history: Vec::new(),
             cpu_window: 120,
+            mem_query: String::new(),
+            mem_scope: table_state::Scope::All,
+            mem_group: false,
+            mem_growth: HashMap::new(),
+            mem_prev_rss: HashMap::new(),
+            mem_smaps: None,
             proc_selected: None,
             proc_dialog: None,
             proc_menu: None,
@@ -332,8 +356,32 @@ impl App {
     fn sample_processes(&mut self) {
         self.proc = self.proc_sampler.sample();
         self.table.note_changes(&self.proc.processes);
+        self.note_mem_growth();
         self.push_cpu_history();
         self.next_proc_sample = Instant::now() + self.table.refresh.duration();
+    }
+
+    /// Real two-frame diff of resident memory, so the Memory view can flag a
+    /// process that just grew instead of guessing. Entries expire on their own.
+    fn note_mem_growth(&mut self) {
+        let now = Instant::now();
+        self.mem_growth
+            .retain(|_, (_, at)| now.duration_since(*at) < MEM_GROWTH_TTL);
+        for process in &self.proc.processes {
+            let Some(previous) = self.mem_prev_rss.get(&process.pid) else {
+                continue;
+            };
+            let delta = process.rss_kb as i64 - *previous as i64;
+            if delta.abs() >= MEM_GROWTH_KB {
+                self.mem_growth.insert(process.pid, (delta, now));
+            }
+        }
+        self.mem_prev_rss = self
+            .proc
+            .processes
+            .iter()
+            .map(|p| (p.pid, p.rss_kb))
+            .collect();
     }
 
     /// Re-entry baseline: a real sample, but no change markers for the time
@@ -1100,10 +1148,50 @@ impl App {
         cx.notify();
     }
 
-    /// Select a process row; used by every process view.
     /// Chart window on the CPU view, in samples (0.5s refresh → 60s span).
     pub(crate) fn set_cpu_window(&mut self, window: usize, cx: &mut Context<Self>) {
         self.cpu_window = window.clamp(1, CPU_HISTORY);
+        cx.notify();
+    }
+
+    pub(crate) fn set_mem_scope(&mut self, scope: table_state::Scope, cx: &mut Context<Self>) {
+        self.mem_scope = scope;
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_mem_group(&mut self, cx: &mut Context<Self>) {
+        self.mem_group = !self.mem_group;
+        cx.notify();
+    }
+
+    pub(crate) fn mem_query_char(&mut self, ch: char, cx: &mut Context<Self>) {
+        self.mem_query.push(ch);
+        cx.notify();
+    }
+
+    pub(crate) fn mem_query_backspace(&mut self, cx: &mut Context<Self>) {
+        self.mem_query.pop();
+        cx.notify();
+    }
+
+    pub(crate) fn mem_query_clear(&mut self, cx: &mut Context<Self>) {
+        self.mem_query.clear();
+        self.proc_selected = None;
+        self.mem_smaps = None;
+        cx.notify();
+    }
+
+    /// Select a process on the Memory view. `smaps_rollup` walks that one
+    /// process' page tables, so it is read here, on selection, and cached until
+    /// the selection changes.
+    pub(crate) fn select_memory_process(&mut self, pid: u32, cx: &mut Context<Self>) {
+        if self.proc_selected == Some(pid) {
+            self.proc_selected = None;
+            self.mem_smaps = None;
+        } else {
+            self.proc_selected = Some(pid);
+            self.mem_smaps = proc::smaps(pid).map(|smaps| (pid, smaps));
+        }
         cx.notify();
     }
 
@@ -1411,6 +1499,11 @@ impl Render for App {
                             cpu_history: &self.cpu_history,
                             core_history: &self.core_history,
                             cpu_window: self.cpu_window,
+                            mem_query: &self.mem_query,
+                            mem_scope: self.mem_scope,
+                            mem_group: self.mem_group,
+                            mem_growth: &self.mem_growth,
+                            mem_smaps: self.mem_smaps.as_ref().map(|(_, smaps)| smaps),
                             proc_selected,
                             table: &self.table,
                             my_uid: self.my_uid,
@@ -1860,6 +1953,11 @@ pub(crate) struct Overview<'a> {
     pub(crate) cpu_history: &'a [f32],
     pub(crate) core_history: &'a [Vec<f32>],
     pub(crate) cpu_window: usize,
+    pub(crate) mem_query: &'a str,
+    pub(crate) mem_scope: table_state::Scope,
+    pub(crate) mem_group: bool,
+    pub(crate) mem_growth: &'a HashMap<u32, (i64, Instant)>,
+    pub(crate) mem_smaps: Option<&'a proc::Smaps>,
     pub(crate) proc_selected: Option<u32>,
     pub(crate) table: &'a table_state::TableState,
     pub(crate) my_uid: u32,
@@ -1981,6 +2079,10 @@ impl App {
         self.nav.page.plugin == "processes" && self.nav.page.view == "table"
     }
 
+    fn on_memory_view(&self) -> bool {
+        self.nav.page.plugin == "processes" && self.nav.page.view == "memory"
+    }
+
     /// The scroll area the indicator and the keyboard act on.
     fn active_led(&mut self, target: scroll::Target) -> &mut scroll::Led {
         match target {
@@ -2066,6 +2168,27 @@ impl App {
                 // selection; the scroller follows instead of being a separate
                 // cursor that the user has to keep in sync.
                 self.table_key(key, cx);
+            }
+            return;
+        }
+        if self.on_memory_view() {
+            // The Memory view has no row cursor; plain characters filter the
+            // map, and the arrow keys stay with the page scroller.
+            match key {
+                "backspace" => self.mem_query_backspace(cx),
+                "escape" => self.mem_query_clear(cx),
+                ch if !ch.starts_with("ctrl-")
+                    && ch.chars().count() == 1
+                    && !ch.chars().next().unwrap().is_control() =>
+                {
+                    for c in ch.chars() {
+                        self.mem_query_char(c, cx);
+                    }
+                }
+                "up" | "down" | "pageup" | "pagedown" | "home" | "end" => {
+                    self.scroll_key(key, cx);
+                }
+                _ => {}
             }
             return;
         }
