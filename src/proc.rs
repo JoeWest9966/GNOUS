@@ -76,8 +76,64 @@ pub struct Process {
     pub threads: u32,
     /// Seconds since boot when the process started.
     pub age_secs: u64,
+    /// `VmRSS` split into its parts, from `/proc/<pid>/status`.
+    pub rss_anon_kb: u64,
+    pub rss_file_kb: u64,
+    pub rss_shmem_kb: u64,
+    /// `VmSwap`: part of this process that lives in swap.
+    pub swap_kb: u64,
+    /// `VmPeak`: the high-water mark of virtual size.
+    pub vm_peak_kb: u64,
     /// Recent CPU samples, newest last (only kept for the busiest processes).
     pub history: Vec<u8>,
+}
+
+/// Shared-page accounting for one process, from `/proc/<pid>/smaps_rollup`.
+pub struct Smaps {
+    /// Proportional set size: shared pages split by how many processes map them.
+    pub pss_kb: u64,
+    /// Unique set size: private clean + private dirty, i.e. what dies with it.
+    pub uss_kb: u64,
+    pub shared_kb: u64,
+    pub swap_pss_kb: u64,
+}
+
+/// Reads `smaps_rollup` for one pid. This walks the page tables of that
+/// process, so it is only called for the selected row, never for every process
+/// on every tick.
+pub fn smaps(pid: u32) -> Option<Smaps> {
+    let raw = std::fs::read_to_string(format!("/proc/{pid}/smaps_rollup")).ok()?;
+    let mut pss_kb = 0u64;
+    let mut private_clean = 0u64;
+    let mut private_dirty = 0u64;
+    let mut shared_clean = 0u64;
+    let mut shared_dirty = 0u64;
+    let mut swap_pss_kb = 0u64;
+    for line in raw.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let kb = value
+            .split_whitespace()
+            .next()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+        match key {
+            "Pss" => pss_kb = kb,
+            "Private_Clean" => private_clean = kb,
+            "Private_Dirty" => private_dirty = kb,
+            "Shared_Clean" => shared_clean = kb,
+            "Shared_Dirty" => shared_dirty = kb,
+            "SwapPss" => swap_pss_kb = kb,
+            _ => {}
+        }
+    }
+    Some(Smaps {
+        pss_kb,
+        uss_kb: private_clean + private_dirty,
+        shared_kb: shared_clean + shared_dirty,
+        swap_pss_kb,
+    })
 }
 
 impl Process {
@@ -264,11 +320,26 @@ fn read_process(pid: u32, users: &mut HashMap<u32, String>, clock_ticks: f64) ->
     let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
     let mut uid = 0u32;
     let mut rss_kb = 0u64;
+    let mut rss_anon_kb = 0u64;
+    let mut rss_file_kb = 0u64;
+    let mut rss_shmem_kb = 0u64;
+    let mut swap_kb = 0u64;
+    let mut vm_peak_kb = 0u64;
     for line in status.lines() {
         if let Some(value) = line.strip_prefix("Uid:") {
             uid = value.split_whitespace().next()?.parse().ok()?;
         } else if let Some(value) = line.strip_prefix("VmRSS:") {
             rss_kb = value.split_whitespace().next()?.parse().ok()?;
+        } else if let Some(value) = line.strip_prefix("RssAnon:") {
+            rss_anon_kb = value.split_whitespace().next()?.parse().ok()?;
+        } else if let Some(value) = line.strip_prefix("RssFile:") {
+            rss_file_kb = value.split_whitespace().next()?.parse().ok()?;
+        } else if let Some(value) = line.strip_prefix("RssShmem:") {
+            rss_shmem_kb = value.split_whitespace().next()?.parse().ok()?;
+        } else if let Some(value) = line.strip_prefix("VmSwap:") {
+            swap_kb = value.split_whitespace().next()?.parse().ok()?;
+        } else if let Some(value) = line.strip_prefix("VmPeak:") {
+            vm_peak_kb = value.split_whitespace().next()?.parse().ok()?;
         }
     }
 
@@ -286,6 +357,11 @@ fn read_process(pid: u32, users: &mut HashMap<u32, String>, clock_ticks: f64) ->
             rss_kb,
             threads,
             age_secs,
+            rss_anon_kb,
+            rss_file_kb,
+            rss_shmem_kb,
+            swap_kb,
+            vm_peak_kb,
             history: Vec::new(),
         },
         ticks: utime + stime,

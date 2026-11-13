@@ -1040,10 +1040,21 @@ fn stat_line(label: &str, value: String) -> Div {
 // C · memory map
 // ============================================================================
 
-struct Block {
-    pid: u32,
-    name: String,
+/// One treemap cell: a single process, a merged name group, or the leftover
+/// tail of the list. `pids` is what a click acts on.
+#[derive(Clone)]
+struct MemCell {
+    label: String,
+    pids: Vec<u32>,
     rss_kb: u64,
+    /// Signed RSS delta from the last real sample, when it passed the
+    /// threshold. `None` means "no change worth flagging".
+    growth: Option<i64>,
+    rect: Rect,
+}
+
+#[derive(Clone, Copy, Default)]
+struct Rect {
     x: f32,
     y: f32,
     w: f32,
@@ -1052,150 +1063,607 @@ struct Block {
 
 fn memory(overview: &Overview, weak: &WeakEntity<App>) -> Div {
     let snap = overview.proc;
-    let mut procs: Vec<&Process> = snap.processes.iter().take(60).collect();
-    procs.sort_by(|a, b| b.rss_kb.cmp(&a.rss_kb));
-    let mut items: Vec<(u32, String, u64)> = procs
-        .iter()
-        .map(|p| (p.pid, p.name.clone(), p.rss_kb))
-        .collect();
-    let total: u64 = items.iter().map(|item| item.2).sum();
-    let used_total = snap.mem_used_kb.max(total);
-    items.push((0, "其余".into(), used_total.saturating_sub(total)));
-
-    let blocks = tile(&items, 0., 0., 780., 420.);
+    let mem = &overview.snap.memory;
+    let (cells, listed_kb, matched) = mem_cells(overview);
     let selected = overview
         .proc_selected
-        .and_then(|pid| snap.processes.iter().find(|p| p.pid == pid))
-        .or_else(|| snap.processes.first());
+        .and_then(|pid| snap.processes.iter().find(|p| p.pid == pid));
 
-    h().items_stretch()
-        .gap(px(1.))
-        .bg(line())
-        .border(px(1.))
-        .border_color(line())
+    v().flex_1()
+        .min_h_0()
+        .child(page_head(
+            overview,
+            "内存",
+            format!(
+                "{} 个进程匹配 · RSS 合计 {:.1} GB · 面积 = 常驻内存 · 点方块看 PSS/USS",
+                matched,
+                listed_kb as f32 / 1024. / 1024.,
+            ),
+        ))
+        .child(mem_composition(mem))
+        .child(mem_toolbar(overview, weak))
         .child(
-            v().flex_1()
-                .min_w_0()
-                .bg(black())
-                .p(px(22.))
+            h().flex_1()
+                .min_h_0()
+                .gap(px(1.))
+                .bg(line())
+                .border(px(1.))
+                .border_color(line())
+                .child(
+                    v().flex_1()
+                        .min_w_0()
+                        .min_h_0()
+                        .bg(black())
+                        .p(px(18.))
+                        .child(treemap(cells, weak, overview)),
+                )
+                .child(mem_detail(overview, selected, weak)),
+        )
+}
+
+/// Physical memory as one stacked bar, split the way `free` splits it so the
+/// segments always add up. The finer breakdown underneath explains *used*; it
+/// never invents a number to close a gap.
+fn mem_composition(mem: &crate::sys::MemoryBreakdown) -> Div {
+    let gb = |kb: u64| kb as f32 / 1024. / 1024.;
+    let segment =
+        |kb: u64, color: gpui_kit::Hsla| div().h_full().w(relative(mem.frac(kb))).bg(color);
+    let legend = |label: &str, kb: u64, color: gpui_kit::Hsla| {
+        h().items_center()
+            .gap(px(7.))
+            .child(div().size(px(7.)).bg(color))
+            .child(styled_label(label, dim()))
+            .child(styled_label(&format!("{:.1} GB", gb(kb)), muted()))
+    };
+    // Row of the used-memory breakdown: label, size, share of used.
+    let part = |label: &str, kb: u64| {
+        h().justify_between()
+            .py(px(3.))
+            .child(styled_label(label, muted()))
+            .child(styled_label(
+                &format!(
+                    "{:.1} GB · {:.0}%",
+                    gb(kb),
+                    if mem.used_kb == 0 {
+                        0.
+                    } else {
+                        kb as f32 / mem.used_kb as f32 * 100.
+                    }
+                ),
+                text(),
+            ))
+    };
+
+    v().mb(px(18.))
+        .child(
+            h().items_end()
+                .justify_between()
+                .mb(px(8.))
                 .child(
                     h().items_end()
-                        .justify_between()
-                        .mb(px(6.))
-                        .child(
-                            v().child(caps("内存地图", 10., FontWeight::NORMAL, dim(), 0.22))
-                                .child(
-                                    txt("面积 = 常驻内存", 11.5, FontWeight::NORMAL, muted())
-                                        .mt(px(6.)),
-                                ),
-                        )
+                        .gap(px(10.))
                         .child(txt(
-                            format!(
-                                "{:.1} / {:.0} GB",
-                                snap.mem_used_kb as f32 / 1024. / 1024.,
-                                snap.mem_total_kb as f32 / 1024. / 1024.
-                            ),
-                            22.,
+                            format!("{:.1}", gb(mem.used_kb)),
+                            26.,
                             FontWeight::EXTRA_LIGHT,
                             text(),
+                        ))
+                        .child(txt(
+                            format!(
+                                "/ {:.0} GB 已用 · 可用 {:.1} GB · 空闲 {:.1} GB",
+                                gb(mem.total_kb),
+                                gb(mem.available_kb),
+                                gb(mem.free_kb),
+                            ),
+                            10.5,
+                            FontWeight::NORMAL,
+                            muted(),
                         )),
                 )
                 .child(
-                    div()
-                        .relative()
-                        .w_full()
-                        .h(px(420.))
-                        .children(blocks.into_iter().map(|block| {
-                            let pid = block.pid;
-                            let sel = overview.proc_selected == Some(pid);
-                            let weak = weak.clone();
-                            let shade = if block.pid == 0 {
-                                alpha(0xffffff06)
-                            } else {
-                                alpha(
-                                    0xffffff0e
-                                        + (block.rss_kb.min(2_000_000) / 200_000) as u32
-                                            * 0x00000008,
-                                )
-                            };
-                            let label = if block.w > 90. && block.h > 30. {
-                                Some((block.name.clone(), block.rss_kb))
-                            } else {
-                                None
-                            };
-                            v().absolute()
-                                .id(("blk", block.pid as usize))
-                                .cursor_pointer()
-                                .left(px(block.x))
-                                .top(px(block.y))
-                                .w(px((block.w - 2.).max(1.)))
-                                .h(px((block.h - 2.).max(1.)))
-                                .bg(if sel { alpha(0xe3193728) } else { shade })
-                                .border(px(1.))
-                                .border_color(if sel { accent() } else { alpha(0xffffff10) })
-                                .p(px(7.))
-                                .when(pid > 0, |this| {
-                                    this.on_click(move |_, _, cx| {
-                                        let _ =
-                                            weak.update(cx, |app, cx| app.select_process(pid, cx));
-                                    })
-                                })
-                                .when_some(label, |this, (name, rss)| {
-                                    this.child(txt(name, 11., FontWeight::NORMAL, text()))
-                                        .child(txt(
-                                            format!("{:.0} MB", rss as f32 / 1024.),
-                                            9.5,
-                                            FontWeight::NORMAL,
-                                            dim(),
-                                        ))
-                                })
-                        })),
+                    h().gap(px(14.))
+                        .child(legend("已用", mem.used_kb, text()))
+                        .child(legend("可回收缓存", mem.reclaimable_kb, accent()))
+                        .child(legend("空闲", mem.free_kb, dim())),
                 ),
         )
-        .child(detail_panel(overview, selected, weak, "选中进程", false))
+        .child(
+            h().h(px(10.))
+                .gap(px(1.))
+                .bg(line())
+                .child(segment(mem.used_kb, text()))
+                .child(segment(mem.reclaimable_kb, accent()))
+                .child(segment(mem.free_kb, dim())),
+        )
+        .child(
+            h().gap(px(18.))
+                .items_center()
+                .mt(px(9.))
+                .child(styled_label("已用构成", dim()))
+                .child(part("应用匿名", mem.anon_kb))
+                .child(part("共享内存", mem.shmem_kb))
+                .child(part("内核 Slab", mem.slab_kb))
+                .child(part("内核栈 + 页表", mem.stack_kb))
+                .child(part("Swap 驻留", mem.swap_cached_kb))
+                .when(mem.gpu_kb > 0, |this| {
+                    this.child(part("GPU 显存", mem.gpu_kb))
+                })
+                .when(mem.other_kb > 0, |this| {
+                    this.child(part("内核未细分", mem.other_kb))
+                }),
+        )
+        .child(
+            h().gap(px(18.)).mt(px(6.)).child(styled_label_s(
+                &format!(
+                    "可回收缓存 = MemAvailable - MemFree，内核随时能丢；Swap {:.1}/{:.0} GB · 脏页 {:.2} GB",
+                    gb(mem.swap_used_kb),
+                    gb(mem.swap_total_kb),
+                    gb(mem.dirty_kb),
+                ),
+                10.,
+                dim(),
+            )),
+        )
 }
 
-/// Slice-and-dice treemap; alternating direction keeps blocks readable.
-fn tile(items: &[(u32, String, u64)], x: f32, y: f32, w: f32, h: f32) -> Vec<Block> {
-    if items.is_empty() {
-        return Vec::new();
-    }
-    if items.len() == 1 {
-        let (pid, name, rss) = items[0].clone();
-        return vec![Block {
-            pid,
-            name,
-            rss_kb: rss,
-            x,
-            y,
-            w,
-            h,
-        }];
-    }
-    let total: u64 = items.iter().map(|item| item.2).sum::<u64>().max(1);
-    let mut acc = 0u64;
-    let mut split = items.len();
-    for (index, item) in items.iter().enumerate() {
-        acc += item.2;
-        if acc as f32 / total as f32 >= 0.5 {
-            split = index + 1;
-            break;
+fn styled_label(label: &str, color: gpui_kit::Hsla) -> gpui_kit::Div {
+    txt(label.to_string(), 10.5, FontWeight::NORMAL, color)
+}
+
+fn styled_label_s(label: &str, size: f32, color: gpui_kit::Hsla) -> gpui_kit::Div {
+    txt(label.to_string(), size, FontWeight::NORMAL, color)
+}
+
+fn mem_toolbar(overview: &Overview, weak: &WeakEntity<App>) -> Div {
+    let query = overview.mem_query;
+    let group = overview.mem_group;
+    let chip = |id: &'static str, label: &str, active: bool, scope: Scope| {
+        tool_button(id, label, active, {
+            let weak = weak.clone();
+            Box::new(move |cx: &mut gpui_kit::App| {
+                let _ = weak.update(cx, |app, cx| app.set_mem_scope(scope, cx));
+            })
+        })
+    };
+    let group_chip = tool_button(
+        "mem-group",
+        if group {
+            "合并同类 · 开"
+        } else {
+            "合并同类 · 关"
+        },
+        group,
+        {
+            let weak = weak.clone();
+            Box::new(move |cx: &mut gpui_kit::App| {
+                let _ = weak.update(cx, |app, cx| app.toggle_mem_group(cx));
+            })
+        },
+    );
+
+    h().flex_wrap()
+        .items_center()
+        .gap(px(6.))
+        .mb(px(14.))
+        .child(
+            h().items_center()
+                .w(px(230.))
+                .px(px(9.))
+                .py(px(5.))
+                .gap(px(6.))
+                .border(px(1.))
+                .border_color(if query.is_empty() {
+                    line_strong()
+                } else {
+                    accent()
+                })
+                .child(caps("搜索", 8.5, FontWeight::NORMAL, dim(), 0.14))
+                .child(if query.is_empty() {
+                    styled_label("名称或 PID", dim())
+                } else {
+                    styled_label(query, text())
+                }),
+        )
+        .child(chip(
+            "mem-scope-all",
+            Scope::All.label(),
+            overview.mem_scope == Scope::All,
+            Scope::All,
+        ))
+        .child(chip(
+            "mem-scope-mine",
+            Scope::Mine.label(),
+            overview.mem_scope == Scope::Mine,
+            Scope::Mine,
+        ))
+        .child(chip(
+            "mem-scope-system",
+            Scope::System.label(),
+            overview.mem_scope == Scope::System,
+            Scope::System,
+        ))
+        .child(group_chip)
+        .child(styled_label(
+            if query.is_empty() {
+                "合并后一块 = 同名进程合计"
+            } else {
+                "Esc 清空搜索"
+            },
+            dim(),
+        ))
+}
+
+/// Build the cells actually drawn: filter, optionally merge by name, sort by
+/// RSS, then fold the tail into one honest "rest" block.
+fn mem_cells(overview: &Overview) -> (Vec<MemCell>, u64, usize) {
+    let snap = overview.proc;
+    let query = overview.mem_query.trim().to_lowercase();
+    let matched: Vec<&Process> = snap
+        .processes
+        .iter()
+        .filter(|process| match overview.mem_scope {
+            Scope::All => true,
+            Scope::Mine => process.uid == overview.my_uid,
+            Scope::System => process.uid != overview.my_uid,
+        })
+        .filter(|process| {
+            query.is_empty()
+                || process.name.to_lowercase().contains(&query)
+                || process.pid.to_string().contains(&query)
+        })
+        .collect();
+    let matched_count = matched.len();
+    let listed_kb: u64 = matched.iter().map(|p| p.rss_kb).sum();
+    let growth_of = |pids: &[u32]| -> Option<i64> {
+        let mut total = 0i64;
+        let mut any = false;
+        for pid in pids {
+            if let Some((delta, _)) = overview.mem_growth.get(pid) {
+                total += *delta;
+                any = true;
+            }
+        }
+        any.then_some(total)
+    };
+
+    let mut cells: Vec<MemCell> = Vec::new();
+    if overview.mem_group {
+        let mut groups: std::collections::HashMap<&str, (Vec<u32>, u64)> =
+            std::collections::HashMap::new();
+        for process in &matched {
+            let entry = groups.entry(process.name.as_str()).or_default();
+            entry.0.push(process.pid);
+            entry.1 += process.rss_kb;
+        }
+        for (name, (pids, rss_kb)) in groups {
+            cells.push(MemCell {
+                label: format!("{name} ×{}", pids.len()),
+                growth: growth_of(&pids),
+                pids,
+                rss_kb,
+                rect: Rect::default(),
+            });
+        }
+    } else {
+        for process in &matched {
+            cells.push(MemCell {
+                label: process.name.clone(),
+                pids: vec![process.pid],
+                rss_kb: process.rss_kb,
+                growth: growth_of(&[process.pid]),
+                rect: Rect::default(),
+            });
         }
     }
-    let (head, tail) = items.split_at(split.min(items.len() - 1));
-    let head_sum: u64 = head.iter().map(|item| item.2).sum();
-    let frac = head_sum as f32 / total as f32;
-    if w >= h {
-        let head_w = w * frac;
-        let mut out = tile(head, x, y, head_w, h);
-        out.extend(tile(tail, x + head_w, y, w - head_w, h));
-        out
-    } else {
-        let head_h = h * frac;
-        let mut out = tile(head, x, y, w, head_h);
-        out.extend(tile(tail, x, y + head_h, w, h - head_h));
-        out
+    cells.sort_by_key(|cell| std::cmp::Reverse(cell.rss_kb));
+
+    // Small screens and 60+ blocks both hurt: keep the biggest ones legible and
+    // be explicit about what is folded away.
+    const MAX_CELLS: usize = 40;
+    let dropped: u64 = cells.iter().skip(MAX_CELLS).map(|cell| cell.rss_kb).sum();
+    cells.truncate(MAX_CELLS);
+    if dropped > 0 {
+        cells.push(MemCell {
+            label: "其余进程".into(),
+            pids: Vec::new(),
+            rss_kb: dropped,
+            growth: None,
+            rect: Rect::default(),
+        });
     }
+    (cells, listed_kb, matched_count)
+}
+
+/// The map itself. `container_query` hands back the size the layout actually
+/// gave this box, so the treemap fills a wide window instead of a hard-coded
+/// 780×420 rectangle.
+fn treemap(cells: Vec<MemCell>, weak: &WeakEntity<App>, overview: &Overview) -> impl IntoElement {
+    let selected = overview.proc_selected;
+    let weak = weak.clone();
+    gpui_kit::container_query(move |size, _, _| {
+        let w = size.width.as_f32().max(1.);
+        let h = size.height.as_f32().max(1.);
+        let laid = squarify(&cells, w, h);
+        div()
+            .relative()
+            .size_full()
+            .children(laid.into_iter().enumerate().map(|(index, cell)| {
+                let is_selected =
+                    !cell.pids.is_empty() && cell.pids.iter().any(|pid| Some(*pid) == selected);
+                let weak = weak.clone();
+                let pids = cell.pids.clone();
+                let rss_mb = cell.rss_kb as f32 / 1024.;
+                let show_label = cell.rect.w > 78. && cell.rect.h > 26.;
+                let show_growth = cell.rect.w > 130. && cell.rect.h > 46.;
+                let growth = cell.growth;
+                div()
+                    .absolute()
+                    .id(("mem-cell", index))
+                    .cursor_pointer()
+                    .left(px(cell.rect.x))
+                    .top(px(cell.rect.y))
+                    .w(px((cell.rect.w - 1.).max(1.)))
+                    .h(px((cell.rect.h - 1.).max(1.)))
+                    // Bigger blocks sit brighter, so size reads before the label.
+                    .bg(if is_selected {
+                        alpha(0xe3193728)
+                    } else {
+                        alpha(
+                            0xffffff08 + (cell.rss_kb.min(4_000_000) / 200_000) as u32 * 0x00000006,
+                        )
+                    })
+                    .border(px(1.))
+                    .border_color(if is_selected {
+                        accent()
+                    } else if growth.is_some_and(|delta| delta > 0) {
+                        warn()
+                    } else {
+                        alpha(0xffffff10)
+                    })
+                    .hover(|this| this.bg(alpha(0xffffff14)))
+                    .on_click(move |_, _, cx| {
+                        let _ = weak.update(cx, |app, cx| {
+                            if let Some(pid) = pids.first().copied() {
+                                app.select_memory_process(pid, cx);
+                            }
+                        });
+                    })
+                    .when(show_label, |this| {
+                        this.p(px(6.))
+                            .child(txt(cell.label.clone(), 10.5, FontWeight::NORMAL, text()))
+                            .child(txt(
+                                format!("{rss_mb:.0} MB"),
+                                9.,
+                                FontWeight::NORMAL,
+                                dim(),
+                            ))
+                    })
+                    .when_some(growth.filter(|_| show_growth), |this, delta| {
+                        this.child(txt(
+                            format!(
+                                "{}{} MB",
+                                if delta > 0 { "↑" } else { "↓" },
+                                delta.abs() / 1024
+                            ),
+                            9.,
+                            FontWeight::NORMAL,
+                            if delta > 0 { warn() } else { ok() },
+                        ))
+                    })
+            }))
+    })
+    .size_full()
+}
+
+/// Squarified treemap (Bruls, Huizing & van Wijk): keeps cells close to square
+/// so labels stay readable and clicks land where they look.
+fn squarify(cells: &[MemCell], w: f32, h: f32) -> Vec<MemCell> {
+    let total: f64 = cells.iter().map(|cell| cell.rss_kb as f64).sum();
+    if total <= 0. || w <= 0. || h <= 0. {
+        return Vec::new();
+    }
+    let area = w as f64 * h as f64;
+    let mut items: Vec<(usize, f64)> = cells
+        .iter()
+        .enumerate()
+        .map(|(index, cell)| (index, cell.rss_kb as f64 / total * area))
+        .collect();
+    items.sort_by(|a, b| b.1.total_cmp(&a.1));
+
+    let mut out = Vec::with_capacity(cells.len());
+    let (mut x, mut y, mut cw, mut ch) = (0f64, 0f64, w as f64, h as f64);
+    let mut start = 0;
+    while start < items.len() {
+        let short = cw.min(ch);
+        if short <= 0. {
+            // No room left at all; anything remaining is unrenderable. A
+            // sub-pixel row still gets a rect, because the renderer clamps to
+            // one pixel and dropping the cell would hide a real process.
+            break;
+        }
+        let mut end = start + 1;
+        let mut row_area = items[start].1;
+        let mut row_worst = worst_ratio(&items[start..end], short);
+        while end < items.len() {
+            let candidate = worst_ratio(&items[start..=end], short);
+            if candidate > row_worst {
+                break;
+            }
+            row_area += items[end].1;
+            row_worst = candidate;
+            end += 1;
+        }
+        if cw >= ch {
+            let thickness = (row_area / ch).min(cw);
+            let mut cy = y;
+            for &(index, value) in &items[start..end] {
+                let height = if row_area > 0. {
+                    value / row_area * ch
+                } else {
+                    0.
+                };
+                let mut cell = cells[index].clone();
+                cell.rect = Rect {
+                    x: x as f32,
+                    y: cy as f32,
+                    w: thickness as f32,
+                    h: height as f32,
+                };
+                out.push(cell);
+                cy += height;
+            }
+            x += thickness;
+            cw -= thickness;
+        } else {
+            let thickness = (row_area / cw).min(ch);
+            let mut cx = x;
+            for &(index, value) in &items[start..end] {
+                let width = if row_area > 0. {
+                    value / row_area * cw
+                } else {
+                    0.
+                };
+                let mut cell = cells[index].clone();
+                cell.rect = Rect {
+                    x: cx as f32,
+                    y: y as f32,
+                    w: width as f32,
+                    h: thickness as f32,
+                };
+                out.push(cell);
+                cx += width;
+            }
+            y += thickness;
+            ch -= thickness;
+        }
+        start = end;
+    }
+    out
+}
+
+/// Aspect ratio of the worst cell in a candidate row; squarify keeps this
+/// number as small as it can.
+fn worst_ratio(row: &[(usize, f64)], side: f64) -> f64 {
+    if row.is_empty() || side <= 0. {
+        return f64::MAX;
+    }
+    let sum: f64 = row.iter().map(|(_, value)| *value).sum();
+    let biggest = row.iter().map(|(_, value)| *value).fold(0., f64::max);
+    let smallest = row.iter().map(|(_, value)| *value).fold(f64::MAX, f64::min);
+    if sum <= 0. || smallest <= 0. {
+        return f64::MAX;
+    }
+    let s2 = sum * sum;
+    let side2 = side * side;
+    (side2 * biggest / s2).max(s2 / (side2 * smallest))
+}
+
+/// Right column: what the selected process really costs.
+fn mem_detail(overview: &Overview, selected: Option<&Process>, weak: &WeakEntity<App>) -> Div {
+    let Some(process) = selected else {
+        return v()
+            .w(px(300.))
+            .flex_shrink_0()
+            .bg(black())
+            .p(px(24.))
+            .child(caps("选中进程", 10., FontWeight::NORMAL, dim(), 0.22))
+            .child(
+                txt(
+                    "点地图里的方块查看它的内存构成：RSS 细分、PSS、USS 与 Swap。",
+                    11.5,
+                    FontWeight::NORMAL,
+                    muted(),
+                )
+                .mt(px(10.)),
+            );
+    };
+    let pid = process.pid;
+    let growth = overview.mem_growth.get(&pid).map(|(delta, _)| *delta);
+    let smaps = overview
+        .mem_smaps
+        .filter(|_| overview.proc_selected == Some(pid));
+    let kb = |value: u64| format!("{:.1} MB", value as f32 / 1024.);
+    let row = |label: &str, value: String| {
+        h().justify_between()
+            .py(px(5.))
+            .child(styled_label(label, muted()))
+            .child(styled_label(&value, text()))
+    };
+    let table_weak = weak.clone();
+    v().w(px(300.))
+        .flex_shrink_0()
+        .bg(black())
+        .p(px(24.))
+        .child(caps("选中进程", 10., FontWeight::NORMAL, dim(), 0.22))
+        .child(
+            h().items_end()
+                .gap(px(8.))
+                .mt(px(8.))
+                .child(txt(process.name.clone(), 17., FontWeight::LIGHT, text()))
+                .child(styled_label(&format!("PID {pid}"), dim())),
+        )
+        .child(h().gap(px(10.)).mt(px(4.)).child(styled_label(
+            &format!("{} · {}", process.user, process.state.label()),
+            dim(),
+        )))
+        .when_some(growth, |this, delta| {
+            this.child(h().mt(px(6.)).gap(px(6.)).child(styled_label(
+                &format!(
+                    "{}{} MB / 4 秒内",
+                    if delta > 0 { "↑" } else { "↓" },
+                    delta.abs() / 1024
+                ),
+                if delta > 0 { warn() } else { ok() },
+            )))
+        })
+        .child(div().h(px(1.)).w_full().bg(line()).my(px(16.)))
+        .child(caps("RSS 细分", 9.5, FontWeight::NORMAL, dim(), 0.2))
+        .child(row("常驻 RSS", kb(process.rss_kb)))
+        .child(row("私有匿名", kb(process.rss_anon_kb)))
+        .child(row("文件映射", kb(process.rss_file_kb)))
+        .child(row("共享内存", kb(process.rss_shmem_kb)))
+        .child(row("Swap", kb(process.swap_kb)))
+        .child(row("峰值虚拟", kb(process.vm_peak_kb)))
+        .child(div().h(px(1.)).w_full().bg(line()).my(px(14.)))
+        .child(caps("共享页真实占用", 9.5, FontWeight::NORMAL, dim(), 0.2))
+        .child(match smaps {
+            Some(smaps) => v()
+                .child(row("PSS 按比例", kb(smaps.pss_kb)))
+                .child(row("USS 独占", kb(smaps.uss_kb)))
+                .child(row("共享页", kb(smaps.shared_kb)))
+                .child(row("Swap PSS", kb(smaps.swap_pss_kb)))
+                .child(
+                    styled_label_s(
+                        "PSS 把共享页按映射进程数摊开，比 RSS 更接近真实占用。",
+                        9.5,
+                        dim(),
+                    )
+                    .mt(px(6.)),
+                ),
+            None => v().child(
+                styled_label_s("读不到 smaps_rollup（进程已退出或无权限）", 10., dim()).mt(px(4.)),
+            ),
+        })
+        .child(div().h(px(1.)).w_full().bg(line()).my(px(14.)))
+        .child(
+            h().id("mem-open-table")
+                .cursor_pointer()
+                .justify_center()
+                .py(px(7.))
+                .border(px(1.))
+                .border_color(line_strong())
+                .hover(|this| this.border_color(accent()).text_color(accent()))
+                .on_click(move |_, _, cx| {
+                    let _ = table_weak.update(cx, |app, cx| app.focus_process_in_table(pid, cx));
+                })
+                .child(caps(
+                    "在 Table 中打开",
+                    9.5,
+                    FontWeight::NORMAL,
+                    muted(),
+                    0.14,
+                )),
+        )
 }
 
 /// Floating context menu + modal confirmation + toast, drawn above the table.
@@ -2252,4 +2720,72 @@ fn group_card(
                 })),
         )
         .child(v().mt(px(16.)).children(rows))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cell(rss_kb: u64) -> MemCell {
+        MemCell {
+            label: format!("p{rss_kb}"),
+            pids: Vec::new(),
+            rss_kb,
+            growth: None,
+            rect: Rect::default(),
+        }
+    }
+
+    #[test]
+    fn squarify_fills_the_container_without_overlap() {
+        let cells: Vec<MemCell> = [900u64, 500, 300, 200, 100, 50, 25]
+            .into_iter()
+            .map(cell)
+            .collect();
+        let (w, h) = (800., 500.);
+        let laid = squarify(&cells, w, h);
+        assert_eq!(laid.len(), cells.len());
+
+        // Areas add up to the container, so no cell is lost or double counted.
+        let area: f64 = laid.iter().map(|c| c.rect.w as f64 * c.rect.h as f64).sum();
+        assert!((area - (w as f64 * h as f64)).abs() < 1.0, "area {area}");
+
+        // Every rect stays inside the container.
+        for c in &laid {
+            assert!(c.rect.x >= -0.01 && c.rect.y >= -0.01);
+            assert!(c.rect.x + c.rect.w <= w + 0.5);
+            assert!(c.rect.y + c.rect.h <= h + 0.5);
+        }
+
+        // A cell's share of the area tracks its share of the RSS total, which
+        // is what makes "面积 = 常驻内存" honest.
+        let total: f64 = cells.iter().map(|c| c.rss_kb as f64).sum();
+        for c in &laid {
+            let expected = c.rss_kb as f64 / total;
+            let actual = (c.rect.w as f64 * c.rect.h as f64) / (w as f64 * h as f64);
+            assert!((expected - actual).abs() < 0.01, "{expected} vs {actual}");
+        }
+    }
+
+    #[test]
+    fn squarify_handles_degenerate_input() {
+        assert!(squarify(&[], 100., 100.).is_empty());
+        let single = squarify(&[cell(10)], 100., 50.);
+        assert_eq!(single.len(), 1);
+        assert!((single[0].rect.w - 100.).abs() < 0.5);
+        assert!((single[0].rect.h - 50.).abs() < 0.5);
+        // Zero total would divide by zero; it must return nothing instead.
+        assert!(squarify(&[cell(0)], 100., 100.).is_empty());
+    }
+
+    #[test]
+    fn squarify_skips_cells_too_small_to_draw() {
+        // One dominant cell plus a speck: the speck must not produce NaN.
+        let laid = squarify(&[cell(10_000_000), cell(1)], 400., 300.);
+        assert_eq!(laid.len(), 2);
+        for c in &laid {
+            assert!(c.rect.w.is_finite() && c.rect.h.is_finite());
+            assert!(c.rect.w >= 0. && c.rect.h >= 0.);
+        }
+    }
 }
