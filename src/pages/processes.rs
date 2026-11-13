@@ -12,8 +12,10 @@ use gpui_kit::{
 };
 
 use crate::proc::{self, Process, Snapshot};
+use crate::table_state::{Scope, SortKey};
 use crate::theme::{
     accent, alpha, black, caps, dim, h, line, line_faint, line_strong, muted, ok, text, txt, v,
+    warn,
 };
 use crate::{App, Overview};
 
@@ -159,84 +161,269 @@ fn sparkline(
 
 fn table(overview: &Overview, weak: &WeakEntity<App>) -> Div {
     let snap = overview.proc;
-    let rows = snap
-        .processes
-        .iter()
-        .take(120)
-        .enumerate()
-        .map(|(index, process)| {
-            table_row(
-                index,
-                process,
-                overview.proc_selected == Some(process.pid),
-                overview.proc_kill_armed == Some(process.pid),
-                weak,
-            )
-        });
-    v().child(page_head(
-        overview,
-        "进程",
-        format!(
-            "{} 个进程 · {} 个线程 · 按 CPU 降序 · 点击行查看详情",
-            snap.processes.len(),
-            snap.threads
-        ),
-    ))
-    .child(summary(overview))
-    .child(table_header())
-    .children(rows)
-    .child(
-        h().justify_between()
-            .py(px(18.))
-            .pb(px(48.))
-            .text_size(px(10.5))
-            .text_color(dim())
-            .child(txt(
-                format!(
-                    "显示 {} / {} 个进程",
-                    snap.processes.len().min(120),
-                    snap.processes.len()
+    let table = overview.table;
+    let rows = table.rows(&snap.processes, overview.my_uid);
+    let visible: Vec<&Process> = rows.into_iter().take(120).collect();
+    let selected = overview
+        .proc_selected
+        .and_then(|pid| snap.processes.iter().find(|p| p.pid == pid));
+
+    // Sticky header: the header + toolbar stay in a fixed slab, and only the
+    // table body scrolls. GPUI has no `position: sticky`, so the two are
+    // siblings rather than one long scrollable column.
+    v().flex_1()
+        .min_h_0()
+        .child(page_head(
+            overview,
+            "进程",
+            format!(
+                "{} 个进程 · {} 个线程 · 按 {} {} · 点击行查看详情",
+                snap.processes.len(),
+                snap.threads,
+                table.sort.label(),
+                if table.descending { "降序" } else { "升序" },
+            ),
+        ))
+        .child(summary(overview))
+        .child(table_toolbar(overview, weak, visible.len()))
+        .child(table_header(overview, weak))
+        .child(
+            v().id("proc-rows")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .children(visible.iter().enumerate().map(|(index, process)| {
+                    table_row(
+                        index,
+                        process,
+                        overview.proc_selected == Some(process.pid),
+                        overview.proc_kill_armed == Some(process.pid),
+                        weak,
+                    )
+                }))
+                .child(
+                    h().justify_between()
+                        .py(px(18.))
+                        .pb(px(28.))
+                        .text_size(px(10.5))
+                        .text_color(dim())
+                        .child(txt(
+                            format!("显示 {} / {} 个进程", visible.len(), snap.processes.len()),
+                            10.5,
+                            FontWeight::NORMAL,
+                            dim(),
+                        ))
+                        .child(txt(
+                            format!(
+                                "CPU {:.1}% · 内存 {:.1} / {:.0} GB · 负载 {:.2}",
+                                snap.cpu_total,
+                                snap.mem_used_kb as f32 / 1024. / 1024.,
+                                snap.mem_total_kb as f32 / 1024. / 1024.,
+                                snap.load.0
+                            ),
+                            10.5,
+                            FontWeight::NORMAL,
+                            dim(),
+                        )),
                 ),
-                10.5,
-                FontWeight::NORMAL,
-                dim(),
-            ))
-            .child(txt(
-                format!(
-                    "CPU {:.1}% · 内存 {:.1} / {:.0} GB · 负载 {:.2}",
-                    snap.cpu_total,
-                    snap.mem_used_kb as f32 / 1024. / 1024.,
-                    snap.mem_total_kb as f32 / 1024. / 1024.,
-                    snap.load.0
-                ),
-                10.5,
-                FontWeight::NORMAL,
-                dim(),
-            )),
-    )
+        )
+        .when_some(selected, |this, process| {
+            this.child(detail_panel(overview, Some(process), weak, "表格详情"))
+        })
 }
 
-fn table_header() -> Div {
+/// Search / scope / pause / freeze toolbar. Text is typed directly into the
+/// search field: characters append, Backspace deletes, Esc clears.
+fn table_toolbar(overview: &Overview, weak: &WeakEntity<App>, visible: usize) -> Div {
+    let table = overview.table;
+    let query = if table.query.is_empty() {
+        "输入即可搜索名称 / PID / 用户".to_string()
+    } else {
+        table.query.clone()
+    };
+    h().items_center()
+        .gap(px(10.))
+        .mb(px(14.))
+        .child(
+            h().id("search")
+                .items_center()
+                .gap(px(8.))
+                .w(px(280.))
+                .px(px(12.))
+                .py(px(9.))
+                .border(px(1.))
+                .border_color(line_strong())
+                .child(txt(
+                    query,
+                    11.5,
+                    FontWeight::NORMAL,
+                    if table.query.is_empty() {
+                        dim()
+                    } else {
+                        text()
+                    },
+                )),
+        )
+        .child(
+            h().gap(px(1.))
+                .bg(line())
+                .border(px(1.))
+                .border_color(line())
+                .children([Scope::All, Scope::Mine, Scope::System].map(|scope| {
+                    let weak = weak.clone();
+                    div()
+                        .id(("scope", scope as usize))
+                        .cursor_pointer()
+                        .px(px(13.))
+                        .py(px(9.))
+                        .bg(if table.scope == scope {
+                            text()
+                        } else {
+                            black()
+                        })
+                        .text_color(if table.scope == scope {
+                            black()
+                        } else {
+                            muted()
+                        })
+                        .on_click(move |_, _, cx| {
+                            let _ = weak.update(cx, |app, cx| app.set_table_scope(scope, cx));
+                        })
+                        .child(caps(
+                            scope.label(),
+                            10.,
+                            FontWeight::NORMAL,
+                            if table.scope == scope {
+                                black()
+                            } else {
+                                muted()
+                            },
+                            0.14,
+                        ))
+                })),
+        )
+        .child(div().flex_1())
+        .child(txt(
+            format!("{} 条结果", visible),
+            10.5,
+            FontWeight::NORMAL,
+            dim(),
+        ))
+        .child(txt(
+            if table.paused { "已暂停" } else { "实时" },
+            9.5,
+            FontWeight::NORMAL,
+            if table.paused { warn() } else { ok() },
+        ))
+        .child(tool_button(
+            "pause-btn",
+            if table.paused {
+                "继续刷新"
+            } else {
+                "暂停刷新"
+            },
+            table.paused,
+            {
+                let weak = weak.clone();
+                Box::new(move |cx: &mut gpui_kit::App| {
+                    let _ = weak.update(cx, |app, cx| app.toggle_table_pause(cx));
+                }) as Box<dyn Fn(&mut gpui_kit::App)>
+            },
+        ))
+        .child(tool_button(
+            "freeze-btn",
+            if table.frozen_pid.is_some() {
+                "取消冻结"
+            } else {
+                "排序冻结"
+            },
+            table.frozen_pid.is_some(),
+            {
+                let weak = weak.clone();
+                Box::new(move |cx: &mut gpui_kit::App| {
+                    let _ = weak.update(cx, |app, cx| app.toggle_table_freeze(cx));
+                }) as Box<dyn Fn(&mut gpui_kit::App)>
+            },
+        ))
+}
+
+fn tool_button(
+    id: &'static str,
+    label: &'static str,
+    active: bool,
+    handler: Box<dyn Fn(&mut gpui_kit::App)>,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .cursor_pointer()
+        .px(px(13.))
+        .py(px(9.))
+        .border(px(1.))
+        .border_color(if active { accent() } else { line_strong() })
+        .bg(if active { accent() } else { black() })
+        .hover(|this| this.border_color(accent()))
+        .on_click(move |_, _, cx| handler(cx))
+        .child(caps(
+            label,
+            10.,
+            FontWeight::NORMAL,
+            if active { text() } else { muted() },
+            0.14,
+        ))
+}
+
+fn table_header(overview: &Overview, weak: &WeakEntity<App>) -> Div {
+    let table = overview.table;
+    let sort_cell = |label: &str, key: SortKey, width: f32| {
+        let weak = weak.clone();
+        let active = table.sort == key;
+        let arrow = if active {
+            if table.descending { " ▼" } else { " ▲" }
+        } else {
+            ""
+        };
+        let cell = div()
+            .w(px(width))
+            .flex_shrink_0()
+            .id(("sort", key as usize))
+            .cursor_pointer()
+            .on_click(move |_, _, cx| {
+                let _ = weak.update(cx, |app, cx| app.sort_table(key, cx));
+            })
+            .child(caps(
+                &format!("{label}{arrow}"),
+                10.,
+                FontWeight::MEDIUM,
+                if active { text() } else { dim() },
+                0.2,
+            ));
+        if width > 0. {
+            cell
+        } else {
+            cell.flex_1().min_w_0()
+        }
+    };
     h().items_end()
         .pb(px(12.))
         .border_b(px(1.))
         .border_color(line())
-        .child(cell_caps("进程", 0.))
-        .child(cell_caps("状态", 120.))
-        .child(cell_caps("CPU", 170.))
-        .child(cell_caps("内存", 120.))
-        .child(cell_caps("线程", 80.))
-        .child(cell_caps("趋势", 90.))
-        .child(div().w(px(72.)))
-}
-
-fn cell_caps(label: &str, width: f32) -> Div {
-    let cell = if width > 0. {
-        div().w(px(width)).flex_shrink_0()
-    } else {
-        div().flex_1().min_w_0()
-    };
-    cell.child(caps(label, 10., FontWeight::MEDIUM, dim(), 0.2))
+        .child(
+            h().flex_1()
+                .min_w_0()
+                .gap(px(14.))
+                .child(sort_cell("名称", SortKey::Name, 150.))
+                .child(sort_cell("PID", SortKey::Pid, 80.)),
+        )
+        .child(sort_cell("状态", SortKey::State, 120.))
+        .child(sort_cell("CPU", SortKey::Cpu, 170.))
+        .child(sort_cell("内存", SortKey::Memory, 120.))
+        .child(sort_cell("线程", SortKey::Threads, 80.))
+        .child(
+            div()
+                .w(px(90.))
+                .child(caps("趋势", 10., FontWeight::MEDIUM, dim(), 0.2)),
+        )
+        .child(div().w(px(110.)))
 }
 
 fn table_row(
@@ -249,6 +436,7 @@ fn table_row(
     let pid = process.pid;
     let sel_weak = weak.clone();
     let kill_weak = weak.clone();
+    let force_weak = weak.clone();
     let kill_pid = process.pid;
     h().items_center()
         .id(("proc", index))
@@ -317,27 +505,47 @@ fn table_row(
             process.cpu > 20.,
         )))
         .child(
-            div().w(px(72.)).flex_shrink_0().flex().justify_end().child(
-                div()
-                    .id(("kill", index))
-                    .cursor_pointer()
-                    .px(px(9.))
-                    .py(px(4.))
-                    .border(px(1.))
-                    .border_color(if armed { accent() } else { line_strong() })
-                    .text_color(if armed { accent() } else { muted() })
-                    .hover(|this| this.border_color(accent()).text_color(accent()))
-                    .on_click(move |_, _, cx| {
-                        let _ = kill_weak.update(cx, |app, cx| app.kill_process(kill_pid, cx));
-                    })
-                    .child(caps(
-                        if armed { "确认" } else { "结束" },
-                        9.,
-                        FontWeight::NORMAL,
-                        if armed { accent() } else { muted() },
-                        0.14,
-                    )),
-            ),
+            h().w(px(110.))
+                .flex_shrink_0()
+                .gap(px(4.))
+                .justify_end()
+                .child(
+                    div()
+                        .id(("kill", index))
+                        .cursor_pointer()
+                        .px(px(8.))
+                        .py(px(4.))
+                        .border(px(1.))
+                        .border_color(if armed { accent() } else { line_strong() })
+                        .text_color(if armed { accent() } else { muted() })
+                        .hover(|this| this.border_color(accent()).text_color(accent()))
+                        .on_click(move |_, _, cx| {
+                            let _ =
+                                kill_weak.update(cx, |app, cx| app.arm_kill(kill_pid, false, cx));
+                        })
+                        .child(caps(
+                            if armed { "确认" } else { "结束" },
+                            9.,
+                            FontWeight::NORMAL,
+                            if armed { accent() } else { muted() },
+                            0.12,
+                        )),
+                )
+                .child(
+                    div()
+                        .id(("force", index))
+                        .cursor_pointer()
+                        .px(px(7.))
+                        .py(px(4.))
+                        .border(px(1.))
+                        .border_color(if armed { accent() } else { line_strong() })
+                        .hover(|this| this.border_color(accent()).text_color(accent()))
+                        .on_click(move |_, _, cx| {
+                            let _ =
+                                force_weak.update(cx, |app, cx| app.arm_kill(kill_pid, true, cx));
+                        })
+                        .child(caps("强杀", 9., FontWeight::NORMAL, dim(), 0.12)),
+                ),
         )
 }
 
@@ -651,7 +859,7 @@ fn memory(overview: &Overview, weak: &WeakEntity<App>) -> Div {
                         })),
                 ),
         )
-        .child(detail_panel(overview, selected, weak))
+        .child(detail_panel(overview, selected, weak, "选中进程"))
 }
 
 /// Slice-and-dice treemap; alternating direction keeps blocks readable.
@@ -697,18 +905,24 @@ fn tile(items: &[(u32, String, u64)], x: f32, y: f32, w: f32, h: f32) -> Vec<Blo
     }
 }
 
-fn detail_panel(overview: &Overview, process: Option<&Process>, weak: &WeakEntity<App>) -> Div {
+fn detail_panel(
+    overview: &Overview,
+    process: Option<&Process>,
+    weak: &WeakEntity<App>,
+    title: &str,
+) -> Div {
     let Some(process) = process else {
         return v().w(px(300.)).bg(black()).p(px(24.));
     };
     let pid = process.pid;
     let armed = overview.proc_kill_armed == Some(pid);
     let kill_weak = weak.clone();
+    let force_weak = weak.clone();
     v().w(px(300.))
         .flex_shrink_0()
         .bg(black())
         .p(px(24.))
-        .child(caps("选中进程", 10., FontWeight::NORMAL, dim(), 0.22))
+        .child(caps(title, 10., FontWeight::NORMAL, dim(), 0.22))
         .child(
             txt(process.name.clone(), 19., FontWeight::LIGHT, text())
                 .line_height(px(22.))
@@ -745,31 +959,73 @@ fn detail_panel(overview: &Overview, process: Option<&Process>, weak: &WeakEntit
                 .child(stat_line("CPU", format!("{:.1}%", process.cpu)))
                 .child(stat_line("线程", format!("{}", process.threads)))
                 .child(stat_line("状态", process.state.label().to_string()))
-                .child(stat_line("启动于", process.age_label())),
+                .child(stat_line("启动于", process.age_label()))
+                .child(stat_line("PPID", format!("{}", process.ppid))),
         )
         .child(
-            h().id("mem-kill")
+            v().mt(px(16.))
+                .child(caps("命令行", 9.5, FontWeight::NORMAL, dim(), 0.2))
+                .child(
+                    txt(
+                        {
+                            let cmd = proc::command(pid);
+                            if cmd.is_empty() {
+                                "—（内核线程）".to_string()
+                            } else {
+                                cmd
+                            }
+                        },
+                        10.5,
+                        FontWeight::NORMAL,
+                        muted(),
+                    )
+                    .line_height(px(15.))
+                    .mt(px(6.)),
+                ),
+        )
+        .child(
+            h().gap(px(8.))
                 .mt(px(20.))
-                .cursor_pointer()
-                .justify_center()
-                .py(px(10.))
-                .border(px(1.))
-                .border_color(if armed { accent() } else { line_strong() })
-                .bg(if armed { accent() } else { alpha(0x00000000) })
-                .on_click(move |_, _, cx| {
-                    let _ = kill_weak.update(cx, |app, cx| app.kill_process(pid, cx));
-                })
-                .child(caps(
-                    if armed {
-                        "再点一次确认"
-                    } else {
-                        "结束进程"
-                    },
-                    10.,
-                    FontWeight::NORMAL,
-                    if armed { text() } else { muted() },
-                    0.16,
-                )),
+                .child(
+                    div()
+                        .id(("detail-kill", pid as usize))
+                        .flex_1()
+                        .cursor_pointer()
+                        .justify_center()
+                        .py(px(10.))
+                        .border(px(1.))
+                        .border_color(if armed { accent() } else { line_strong() })
+                        .bg(if armed { accent() } else { alpha(0x00000000) })
+                        .on_click(move |_, _, cx| {
+                            let _ = kill_weak.update(cx, |app, cx| app.arm_kill(pid, false, cx));
+                        })
+                        .child(caps(
+                            if armed {
+                                "再点一次确认"
+                            } else {
+                                "结束进程"
+                            },
+                            9.5,
+                            FontWeight::NORMAL,
+                            if armed { text() } else { muted() },
+                            0.14,
+                        )),
+                )
+                .child(
+                    div()
+                        .id(("detail-force", pid as usize))
+                        .cursor_pointer()
+                        .justify_center()
+                        .px(px(12.))
+                        .py(px(10.))
+                        .border(px(1.))
+                        .border_color(line_strong())
+                        .hover(|this| this.border_color(accent()).text_color(accent()))
+                        .on_click(move |_, _, cx| {
+                            let _ = force_weak.update(cx, |app, cx| app.arm_kill(pid, true, cx));
+                        })
+                        .child(caps("强杀", 9.5, FontWeight::NORMAL, dim(), 0.14)),
+                ),
         )
 }
 

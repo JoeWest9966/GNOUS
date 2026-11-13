@@ -5,6 +5,7 @@ mod pages;
 mod proc;
 mod registry;
 mod sys;
+mod table_state;
 mod theme;
 mod toggles;
 
@@ -45,6 +46,9 @@ pub(crate) struct App {
     proc_selected: Option<u32>,
     /// First click arms "结束", second click sends SIGTERM.
     proc_kill_armed: Option<u32>,
+    pub(crate) table: table_state::TableState,
+    /// uid 0 = root; "我的" 过滤以此为基准.
+    my_uid: u32,
     /// One state entry per `fixes::FIXES` row, in the same order.
     fixes: Vec<fixes::FixState>,
     /// HH:MM of the most recent fixes probe.
@@ -90,7 +94,7 @@ impl App {
                 let alive = this
                     .update(cx, |app, cx| {
                         app.snap = app.probe.sample();
-                        if app.nav.page.plugin == "processes" {
+                        if app.nav.page.plugin == "processes" && !app.table.paused {
                             app.proc = app.proc_sampler.sample();
                             app.cpu_history.push(app.proc.cpu_total);
                             let excess = app.cpu_history.len().saturating_sub(30);
@@ -122,6 +126,8 @@ impl App {
             cpu_history: Vec::new(),
             proc_selected: None,
             proc_kill_armed: None,
+            table: table_state::TableState::default(),
+            my_uid: unsafe { libc::geteuid() },
             fixes: fixes::FIXES
                 .iter()
                 .enumerate()
@@ -250,17 +256,88 @@ impl App {
         }
     }
 
+    /// Two-step terminate. `force` selects SIGKILL instead of SIGTERM.
+    pub(crate) fn kill_process(&mut self, pid: u32, force: bool, cx: &mut Context<Self>) {
+        let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
+        self.error = proc::signal(pid, signal).err();
+        self.proc = self.proc_sampler.sample();
+        cx.notify();
+    }
+
     /// Two-step terminate: the first call arms the process, the second kills it.
-    pub(crate) fn kill_process(&mut self, pid: u32, cx: &mut Context<Self>) {
-        if self.proc_kill_armed != Some(pid) {
+    pub(crate) fn arm_kill(&mut self, pid: u32, force: bool, cx: &mut Context<Self>) {
+        if self.proc_kill_armed == Some(pid) {
+            self.proc_kill_armed = None;
+            self.kill_process(pid, force, cx);
+        } else {
             self.proc_kill_armed = Some(pid);
             self.error = None;
             cx.notify();
-            return;
         }
-        self.proc_kill_armed = None;
-        self.error = proc::signal(pid, libc::SIGTERM).err();
-        self.proc = self.proc_sampler.sample();
+    }
+
+    /// Handle a keystroke while the Table view is visible.
+    pub(crate) fn table_key(&mut self, key: &str, cx: &mut Context<Self>) {
+        match key {
+            "backspace" => self.table.backspace(),
+            "escape" => {
+                self.table.clear_query();
+                self.proc_selected = None;
+                self.proc_kill_armed = None;
+            }
+            "space" => self.table.paused = !self.table.paused,
+            "F" => {
+                self.table.frozen_pid = if self.table.frozen_pid.is_some() {
+                    None
+                } else {
+                    self.proc_selected
+                }
+            }
+            "f" => self.table.frozen_pid = None,
+            "k" => {
+                if let Some(pid) = self.proc_selected {
+                    self.arm_kill(pid, false, cx);
+                }
+            }
+            "K" => {
+                if let Some(pid) = self.proc_selected {
+                    self.arm_kill(pid, true, cx);
+                }
+            }
+            "1" => self.table.scope = table_state::Scope::All,
+            "2" => self.table.scope = table_state::Scope::Mine,
+            "3" => self.table.scope = table_state::Scope::System,
+            ch if ch.len() == 1 && !ch.chars().next().unwrap().is_control() => {
+                for c in ch.chars() {
+                    self.table.set_query_char(c);
+                }
+            }
+            _ => {}
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn sort_table(&mut self, key: table_state::SortKey, cx: &mut Context<Self>) {
+        self.table.sort_by(key);
+        cx.notify();
+    }
+
+    pub(crate) fn set_table_scope(&mut self, scope: table_state::Scope, cx: &mut Context<Self>) {
+        self.table.scope = scope;
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_table_pause(&mut self, cx: &mut Context<Self>) {
+        self.table.paused = !self.table.paused;
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_table_freeze(&mut self, cx: &mut Context<Self>) {
+        if self.table.frozen_pid.is_some() {
+            self.table.frozen_pid = None;
+        } else {
+            self.table.frozen_pid = self.proc_selected;
+        }
         cx.notify();
     }
 
@@ -339,6 +416,8 @@ impl Render for App {
                             cpu_history: &self.cpu_history,
                             proc_selected: self.proc_selected,
                             proc_kill_armed: self.proc_kill_armed,
+                            table: &self.table,
+                            my_uid: self.my_uid,
                             fixes: &self.fixes,
                             fixes_checked: &self.fixes_checked,
                             fixes_apply_armed: self.fixes_apply_armed,
@@ -733,6 +812,8 @@ pub(crate) struct Overview<'a> {
     pub(crate) cpu_history: &'a [f32],
     pub(crate) proc_selected: Option<u32>,
     pub(crate) proc_kill_armed: Option<u32>,
+    pub(crate) table: &'a table_state::TableState,
+    pub(crate) my_uid: u32,
     /// Per-row state of the gnome-fixes extension.
     pub(crate) fixes: &'a [fixes::FixState],
     pub(crate) fixes_checked: &'a str,
@@ -741,6 +822,8 @@ pub(crate) struct Overview<'a> {
 
 fn content(overview: &Overview, cx: &mut Context<App>) -> impl IntoElement {
     let weak = cx.entity().downgrade();
+    let key_weak = cx.entity().downgrade();
+    let table_view = overview.page.plugin == "processes" && overview.page.view == "table";
     let body = match (overview.page.plugin, overview.page.view) {
         ("core", "overview") => overview_body(overview, &weak),
         ("core", "installed") => extensions_body(overview, &weak),
@@ -748,15 +831,26 @@ fn content(overview: &Overview, cx: &mut Context<App>) -> impl IntoElement {
         ("gnome-fixes", _) => pages::gnome_fixes::body(overview, &weak),
         (_, label) => placeholder(label),
     };
-    v().id("content")
+    // Table owns its own scrollbar below the header; every other page keeps
+    // the shared outer scroller.
+    let outer = v()
+        .id("content")
         .flex_1()
         .min_h_0()
-        .overflow_y_scroll()
         .pl(px(40.))
         .pr(px(52.))
-        .pt(px(52.))
-        .pb(px(64.))
-        .child(body)
+        .pt(if table_view { px(30.) } else { px(52.) })
+        .pb(if table_view { px(30.) } else { px(64.) })
+        .when(!table_view, |this| this.overflow_y_scroll())
+        .child(body);
+    outer.when(table_view, |this| {
+        this.child(div().id("table-keys").on_key_down(
+            move |event: &gpui_kit::KeyDownEvent, _, cx| {
+                let key = event.keystroke.key.as_str();
+                let _ = key_weak.update(cx, |app, cx| app.table_key(key, cx));
+            },
+        ))
+    })
 }
 
 fn overview_body(overview: &Overview, weak: &WeakEntity<App>) -> Div {
