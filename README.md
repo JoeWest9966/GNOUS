@@ -45,8 +45,15 @@
   滚过的变暗红、当前位置那根拉长成亮红。整列既是指示器也是把手 —— 点哪跳哪、按住可连续拖；
   再加键盘 `↑` `↓` `PgUp` `PgDn` `Home` `End`，所以滚轮坏了也能走完整个页面。
   两个滚动区（页面外层 / 进程表体）各自独立跟踪一份 scroll handle。
+- 页面级扩展按 `docs/EXTENSIONS.md` 的 manifest + registry 机制接入：
+  `gnome-fixes` 把 5 个 GNOME 小补丁收成「体检 / 应用 / 回退」；`root-align` 是
+  C 方案诊断台，按功能域列出 8 个 systemd 用户单元，原样展示 `status` / `doctor` /
+  动作 stdout。两个页面都调真实外部工具，输出不明时显示失败原因而不伪造状态；
+  危险动作二次确认，`restart-shell` 不进入批量流程。
+- 顶栏同时是客户端标题栏：拖动、双击最大化、右键原生窗口菜单，四边四角提供隐形缩放热区。
 
-其余区块（启动器）仍是静态占位。
+当前版本：`0.2.0-preview.1`。Appearance / Devices / Power 分区与启动器仍是静态占位；
+外部工具默认在 `/home/root/GNOME`，可用 `GNOUS_FIXES_ROOT` 覆盖。发布记录见 `CHANGELOG.md`。
 
 ![GNOUS 渲染](docs/gnous.png)
 
@@ -54,8 +61,12 @@
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"   # 需要 rustup 的 stable（>= 1.92）
-cargo run
+cargo run                         # 开发版
+cargo run --release              # 本机发布版
+./target/release/gnous --version # 打印应用版本
 ```
+
+本机安装入口为 `/usr/local/bin/gnous`，桌面入口为 `/usr/local/share/applications/gnous.desktop`。
 
 ## 源码结构
 
@@ -67,7 +78,10 @@ src/
 ├── registry.rs # 编译期插件注册表：解析 extensions/*/manifest.toml，生成顶栏页面
 ├── proc.rs    # 进程采样：/proc/<pid>/stat + status，CPU 差分、用户名、cgroup
 ├── table_state.rs # Table 视图的排序 / 搜索 / 范围 / 暂停 / 冻结状态
-├── pages/     # 页面级扩展的渲染器（pages/processes.rs = 五种视图）
+├── scroll.rs  # LED 滚动指示器状态（刻度、拖动、键盘跳转）
+├── fixes.rs   # gnome-fixes 的外部命令解析与体检状态
+├── root_align.rs # root-align 的外部命令、单元解析与危险动作约定
+├── pages/     # 页面级扩展渲染器：processes / gnome_fixes / root_align
 ├── toggles.rs # 右侧快捷开关：gsettings bool/choice 与外部命令，缺失即置灰
 ├── theme.rs   # 设计 token（颜色 / 字体 / 字距 / 行高）与文本辅助函数
 └── icons.rs   # 内联 SVG 线性图标（stroke 1.3，与 demo 完全一致）
