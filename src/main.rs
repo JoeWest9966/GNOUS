@@ -1,4 +1,5 @@
 mod ext;
+mod fixes;
 mod icons;
 mod pages;
 mod proc;
@@ -44,6 +45,12 @@ pub(crate) struct App {
     proc_selected: Option<u32>,
     /// First click arms "结束", second click sends SIGTERM.
     proc_kill_armed: Option<u32>,
+    /// One state entry per `fixes::FIXES` row, in the same order.
+    fixes: Vec<fixes::FixState>,
+    /// HH:MM of the most recent fixes probe.
+    fixes_checked: String,
+    /// Batch "apply available fixes" needs a second click before mutating.
+    fixes_apply_armed: bool,
     /// UUID of the extension whose details are open in the right panel.
     selected: Option<String>,
     /// Last provider failure, shown inside the detail panel.
@@ -115,6 +122,17 @@ impl App {
             cpu_history: Vec::new(),
             proc_selected: None,
             proc_kill_armed: None,
+            fixes: fixes::FIXES
+                .iter()
+                .enumerate()
+                .map(|(index, fix)| {
+                    let mut state = fixes::FixState::empty(fix.id);
+                    state.expanded = index == 0;
+                    state
+                })
+                .collect(),
+            fixes_checked: sys::local_clock(),
+            fixes_apply_armed: false,
             selected: None,
             error: None,
             nav: Nav::default(),
@@ -133,6 +151,7 @@ impl App {
         self.nav = Nav { section, page };
         self.selected = None;
         self.error = None;
+        self.fixes_apply_armed = false;
         cx.notify();
     }
 
@@ -140,6 +159,7 @@ impl App {
         self.nav.page = page;
         self.selected = None;
         self.error = None;
+        self.fixes_apply_armed = false;
         if page.plugin == "processes" {
             self.proc = self.proc_sampler.sample();
             self.cpu_history.push(self.proc.cpu_total);
@@ -147,6 +167,80 @@ impl App {
             self.cpu_history.drain(0..excess);
         }
         cx.notify();
+    }
+
+    /// Expand/collapse one fix row; other rows stay as they are.
+    pub(crate) fn toggle_fix(&mut self, id: &'static str, cx: &mut Context<Self>) {
+        if let Some(state) = self.fixes.iter_mut().find(|state| state.id == id) {
+            state.expanded = !state.expanded;
+        }
+        cx.notify();
+    }
+
+    /// Run one action on the background executor; the UI only shows `执行中`
+    /// until the real tool output comes back.
+    pub(crate) fn run_fix(
+        &mut self,
+        id: &'static str,
+        action: fixes::Action,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(state) = self.fixes.iter_mut().find(|state| state.id == id) {
+            if state.busy {
+                return;
+            }
+            state.busy = true;
+        }
+        let weak = cx.entity().downgrade();
+        let task = cx
+            .background_executor()
+            .spawn(async move { fixes::run(id, action) });
+        cx.spawn(async move |_, cx| {
+            let outcome = task.await;
+            let _ = weak.update(cx, |app: &mut App, cx| {
+                if let Some(state) = app.fixes.iter_mut().find(|state| state.id == id) {
+                    state.absorb(outcome);
+                }
+                app.fixes_checked = sys::local_clock();
+                cx.notify();
+            });
+            cx.refresh();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Run `check` for every fix. Each action has its own task, so one slow
+    /// tool never blocks the others.
+    pub(crate) fn check_all_fixes(&mut self, cx: &mut Context<Self>) {
+        for fix in fixes::FIXES {
+            self.run_fix(fix.id, fixes::Action::Check, cx);
+        }
+    }
+
+    /// Two-step batch apply: the first click only arms the button, the second
+    /// applies every fix that is not already healthy/applied.
+    pub(crate) fn apply_pending_fixes(&mut self, cx: &mut Context<Self>) {
+        if !self.fixes_apply_armed {
+            self.fixes_apply_armed = true;
+            cx.notify();
+            return;
+        }
+        self.fixes_apply_armed = false;
+        let pending: Vec<&'static str> = self
+            .fixes
+            .iter()
+            .filter(|state| {
+                matches!(
+                    state.status,
+                    fixes::Status::Attention | fixes::Status::Unknown
+                )
+            })
+            .map(|state| state.id)
+            .collect();
+        for id in pending {
+            self.run_fix(id, fixes::Action::Apply, cx);
+        }
     }
 
     /// Two-step terminate: the first call arms the process, the second kills it.
@@ -238,6 +332,9 @@ impl Render for App {
                             cpu_history: &self.cpu_history,
                             proc_selected: self.proc_selected,
                             proc_kill_armed: self.proc_kill_armed,
+                            fixes: &self.fixes,
+                            fixes_checked: &self.fixes_checked,
+                            fixes_apply_armed: self.fixes_apply_armed,
                         },
                         cx,
                     )),
@@ -629,6 +726,10 @@ pub(crate) struct Overview<'a> {
     pub(crate) cpu_history: &'a [f32],
     pub(crate) proc_selected: Option<u32>,
     pub(crate) proc_kill_armed: Option<u32>,
+    /// Per-row state of the gnome-fixes extension.
+    pub(crate) fixes: &'a [fixes::FixState],
+    pub(crate) fixes_checked: &'a str,
+    pub(crate) fixes_apply_armed: bool,
 }
 
 fn content(overview: &Overview, cx: &mut Context<App>) -> impl IntoElement {
@@ -637,6 +738,7 @@ fn content(overview: &Overview, cx: &mut Context<App>) -> impl IntoElement {
         ("core", "overview") => overview_body(overview, &weak),
         ("core", "installed") => extensions_body(overview, &weak),
         ("processes", view) => pages::processes::body(view, overview, &weak),
+        ("gnome-fixes", _) => pages::gnome_fixes::body(overview, &weak),
         (_, label) => placeholder(label),
     };
     v().id("content")

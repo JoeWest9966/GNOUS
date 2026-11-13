@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GNOUS · 扩展页选型 · clipfix</title>
+<style>
+  :root{--bg:#000;--line:rgba(255,255,255,.09);--line-strong:rgba(255,255,255,.18);--text:#F5F5F7;--muted:#86868B;--dim:#5A5A60;--accent:#E31937}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:"Helvetica Neue",Inter,"Segoe UI",system-ui,"Noto Sans SC",sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;padding:58px 48px 72px}
+  .wrap{max-width:1240px;margin:0 auto}
+  .kicker{font-size:11px;letter-spacing:.26em;text-transform:uppercase;color:var(--dim);margin-bottom:16px}
+  h1{font-size:40px;font-weight:200;letter-spacing:-.02em;line-height:1.1}
+  .top p{color:var(--muted);font-size:13px;line-height:1.75;margin-top:14px;max-width:720px}
+  .hint{font-size:11.5px;color:var(--dim);margin-top:12px}
+  .hint b{color:var(--text);font-weight:400}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);margin-top:44px}
+  a.card{background:var(--bg);text-decoration:none;color:inherit;display:flex;flex-direction:column;transition:background .18s}
+  a.card:hover{background:#0A0A0B}
+  .thumb{height:190px;border-bottom:1px solid var(--line);padding:20px;position:relative;overflow:hidden}
+  .tag{font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);border:1px solid var(--line);padding:4px 8px;display:inline-block}
+  .tA .bars{position:absolute;inset:56px 20px 20px;display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line)}
+  .tA .bars div{background:var(--bg);padding:10px}
+  .tA .bars i{display:block;height:4px;background:rgba(255,255,255,.5);width:40%}
+  .tA .bars u{display:block;height:14px;background:rgba(227,25,55,.85);width:70%;margin-top:10px}
+  .tA .bars b{display:block;height:2px;background:rgba(255,255,255,.12);width:90%;margin-top:9px}
+  .tB .band{position:absolute;inset:58px 20px 20px;border:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 16px}
+  .tB .band b{font-size:38px;font-weight:200;letter-spacing:-.03em;color:var(--muted)}
+  .tB .band span{width:52px;height:26px;border:1px solid var(--line-strong);display:block;position:relative}
+  .tB .band span::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;background:var(--dim)}
+  .tC .split{position:absolute;inset:58px 20px 20px;display:grid;grid-template-columns:40% 1fr;gap:1px;background:var(--line)}
+  .tC .split div{background:var(--bg);padding:8px}
+  .tC .split i{display:block;height:2px;background:rgba(255,255,255,.12);margin-bottom:8px}
+  .tC .split i:first-child{background:rgba(227,25,55,.8);width:14%}
+  .tC .split em{display:block;height:26px;border:1px solid var(--line);margin-top:6px}
+  .meta{padding:20px 22px 24px}
+  .meta .hd{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+  .meta h2{font-size:16.5px;font-weight:500;letter-spacing:-.01em}
+  .meta .en{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
+  .meta p{font-size:12.5px;color:var(--muted);line-height:1.7;margin-top:10px}
+  .tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:14px}
+  .tags span{font-size:10px;letter-spacing:.06em;color:var(--dim);border:1px solid var(--line);padding:4px 9px}
+  .open{margin-top:16px;display:flex;align-items:center;gap:7px;font-size:11px;letter-spacing:.12em;text-transform:uppercase}
+  .open::after{content:"→";transition:transform .2s}
+  a.card:hover .open::after{transform:translateX(4px)}
+  footer{margin-top:54px;border-top:1px solid var(--line);padding-top:20px;display:flex;justify-content:space-between;font-size:11.5px;color:var(--dim);flex-wrap:wrap;gap:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="kicker">GNOUS · clipfix 扩展页</div>
+    <h1>同一个扩展，三种呈现方式。</h1>
+    <p>内容取自 <b style="color:var(--text);font-weight:400">Bug补丁/clipfix</b>：体检结论、四向剪贴板矩阵、补丁开关、回退与重启终端。三种方案共用同一套 Control Deck 语言，区别只在信息组织方式。</p>
+    <div class="hint">建议全屏 · <b>A</b> 信息密度最高 · <b>B</b> 操作路径最短 · <b>C</b> 最能扩展到几十个扩展</div>
+  </div>
+
+  <div class="grid">
+    <a class="card" href="a.html">
+      <div class="thumb tA">
+        <div class="tag">A · 诊断台</div>
+        <div class="bars">
+          <div><i></i><b></b></div>
+          <div><b style="width:60%"></b><b></b></div>
+          <div><u></u><b></b></div>
+          <div><u style="width:50%"></u><b></b></div>
+        </div>
+      </div>
+      <div class="meta">
+        <div class="hd"><h2>诊断台</h2><span class="en">Matrix</span></div>
+        <p>四向矩阵占主位，右侧常驻补丁状态与动作列。一眼看清「哪条路坏了」，适合排障场景。</p>
+        <div class="tags"><span>2×2 矩阵</span><span>状态侧栏</span><span>说明三段</span></div>
+        <div class="open">打开预览</div>
+      </div>
+    </a>
+
+    <a class="card" href="b.html">
+      <div class="thumb tB">
+        <div class="tag">B · 开关优先</div>
+        <div class="band"><b>OFF</b><span></span></div>
+      </div>
+      <div class="meta">
+        <div class="hd"><h2>开关优先</h2><span class="en">Toggle</span></div>
+        <p>巨型状态字 + 一个大开关，四向结果压成一行胶囊，下面是三步生效流程。日常最省事。</p>
+        <div class="tags"><span>大开关</span><span>三步流</span><span>危险操作分离</span></div>
+        <div class="open">打开预览</div>
+      </div>
+    </a>
+
+    <a class="card" href="c.html">
+      <div class="thumb tC">
+        <div class="tag">C · 主从列表</div>
+        <div class="split">
+          <div><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div><i style="width:30%"></i><em></em><em style="height:18px"></em><em></em></div>
+        </div>
+      </div>
+      <div class="meta">
+        <div class="hd"><h2>主从列表</h2><span class="en">Master / Detail</span></div>
+        <p>左侧几十个扩展的列表 + 搜索筛选，右侧 clipfix 详情（状态 / 操作 / 关于）。正是扩展页最终要的骨架。</p>
+        <div class="tags"><span>搜索筛选</span><span>详情 tab</span><span>可扩展到 N 个</span></div>
+        <div class="open">打开预览</div>
+      </div>
+    </a>
+  </div>
+
+  <footer>
+    <span>GNOUS · clipfix 扩展页选型 · 纯静态 HTML</span>
+    <span>3 个方案 · 0 依赖</span>
+  </footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,74 @@
+:root{
+  --bg:#000000;
+  --surface:#0A0A0B;
+  --surface-2:#111113;
+  --line:rgba(255,255,255,.09);
+  --line-strong:rgba(255,255,255,.18);
+  --text:#F5F5F7;
+  --muted:#86868B;
+  --dim:#5A5A60;
+  --accent:#E31937;
+  --ok:#37D67A;
+  --warn:#F5A623;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scrollbar-width:thin;scrollbar-color:#242424 transparent}
+html,body{height:100%}
+body{
+  background:var(--bg);color:var(--text);
+  font-family:"Helvetica Neue",Inter,"Segoe UI",system-ui,"Noto Sans SC",sans-serif;
+  -webkit-font-smoothing:antialiased;font-feature-settings:"tnum";
+  overflow:hidden;
+}
+.app{display:grid;grid-template-columns:68px 1fr;height:100vh}
+
+/* rail */
+.rail{border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:22px 0;gap:6px}
+.brand{width:30px;height:30px;border:1px solid var(--line-strong);display:grid;place-items:center;margin-bottom:26px;font-size:11px;letter-spacing:.08em;font-weight:600}
+.rail button{width:40px;height:40px;background:none;border:0;color:var(--dim);display:grid;place-items:center;cursor:pointer;position:relative;transition:color .18s}
+.rail button:hover{color:var(--text)}
+.rail button.active{color:var(--text)}
+.rail button.active::before{content:"";position:absolute;left:-14px;top:12px;bottom:12px;width:2px;background:var(--accent)}
+.rail svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.3}
+.rail .spacer{flex:1}
+
+/* shell */
+main{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.topbar{height:56px;flex:0 0 56px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:34px;padding:0 40px}
+.wordmark{font-size:13px;letter-spacing:.34em;font-weight:500}
+nav{display:flex;gap:30px;height:100%}
+nav a{display:flex;align-items:center;color:var(--muted);text-decoration:none;font-size:12px;letter-spacing:.13em;text-transform:uppercase;border-bottom:1px solid transparent;transition:.18s}
+nav a:hover{color:var(--text)}
+nav a.on{color:var(--text);border-bottom-color:var(--accent)}
+.topbar .right{margin-left:auto;display:flex;align-items:center;gap:22px;color:var(--muted);font-size:12px;letter-spacing:.06em}
+.dot{width:5px;height:5px;border-radius:50%;background:var(--ok);display:inline-block;margin-right:7px;vertical-align:1px}
+.dot.bad{background:var(--accent)}
+.dot.warn{background:var(--warn)}
+.clock{font-variant-numeric:tabular-nums;color:var(--text)}
+
+.scroll{overflow-y:auto;flex:1;padding:46px 40px 64px}
+.scroll::-webkit-scrollbar{width:6px}
+.scroll::-webkit-scrollbar-thumb{background:#222}
+
+/* type */
+.eyebrow{font-size:11px;letter-spacing:.26em;text-transform:uppercase;color:var(--dim);margin-bottom:14px}
+h1{font-size:44px;font-weight:200;letter-spacing:-.02em;line-height:1.05}
+.sub{color:var(--muted);font-size:13px;margin-top:12px;letter-spacing:.02em;line-height:1.6}
+.hero{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:48px}
+.hero-actions{display:flex;gap:10px}
+.btn{background:none;border:1px solid var(--line-strong);color:var(--text);padding:11px 22px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;cursor:pointer;transition:.18s;font-family:inherit}
+.btn:hover{background:#fff;color:#000;border-color:#fff}
+.btn.solid{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.solid:hover{background:#c2142d;border-color:#c2142d;color:#fff}
+.btn.ghost{color:var(--muted)}
+.btn.ghost:hover{color:#000}
+
+.section-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:20px}
+.section-head h2{font-size:12px;letter-spacing:.24em;text-transform:uppercase;font-weight:500;color:var(--muted)}
+.section-head span{font-size:11px;letter-spacing:.12em;color:var(--dim);text-transform:uppercase}
+
+/* pills */
+.pill{font-size:10px;letter-spacing:.1em;text-transform:uppercase;border:1px solid var(--line);padding:5px 10px;color:var(--dim)}
+.pill.ok{color:var(--ok);border-color:rgba(55,214,122,.35)}
+.pill.bad{color:var(--accent);border-color:rgba(227,25,55,.4)}
+.pill.warn{color:var(--warn);border-color:rgba(245,166,35,.35)}

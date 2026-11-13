@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GNOUS · 修复 · GNOME Fixes</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  /* hero 指标 */
+  .metrics{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-bottom:44px}
+  .metric{padding:26px 26px 24px;border-left:1px solid var(--line)}
+  .metric:first-child{border-left:0;padding-left:0}
+  .metric .k{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim);margin-bottom:16px}
+  .metric .v{font-size:44px;font-weight:200;letter-spacing:-.03em;line-height:1;display:flex;align-items:baseline;gap:8px}
+  .metric .v small{font-size:13px;font-weight:300;color:var(--muted)}
+  .metric.hot .v{color:var(--accent)}
+
+  /* 修复列表 */
+  .fixes{border:1px solid var(--line);margin-bottom:40px}
+  .fix{border-top:1px solid var(--line);cursor:pointer;transition:background .15s}
+  .fix:first-child{border-top:0}
+  .fix:hover{background:var(--surface)}
+  .fix.open{background:var(--surface)}
+  .row{display:grid;grid-template-columns:52px 1fr 210px 150px 26px;align-items:center;gap:18px;padding:20px 24px}
+  .row .n{font-size:12px;color:var(--dim);letter-spacing:.16em;font-variant-numeric:tabular-nums}
+  .row .name b{font-size:14px;font-weight:400;letter-spacing:.01em}
+  .row .name i{display:block;font-style:normal;font-size:11.5px;color:var(--dim);margin-top:6px;letter-spacing:.02em}
+  .row .state{font-size:11.5px;letter-spacing:.04em}
+  .row .state span{display:flex;align-items:center;gap:8px}
+  .row .acts{display:flex;gap:14px;justify-content:flex-end;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+  .row .acts u{text-decoration:none;border-bottom:1px solid transparent;padding-bottom:3px;transition:.15s}
+  .fix:hover .acts u{color:var(--muted)}
+  .row .acts u:hover{color:var(--text);border-bottom-color:var(--line-strong)}
+  .row .acts u.hot{color:var(--accent)}
+  .chev{width:8px;height:8px;border-right:1px solid var(--dim);border-bottom:1px solid var(--dim);transform:rotate(45deg);transition:transform .2s;justify-self:end}
+  .fix.open .chev{transform:rotate(225deg)}
+
+  /* 展开详情 */
+  .detail{display:none;border-top:1px solid var(--line);padding:0}
+  .fix.open .detail{display:block}
+  .detail .inner{display:grid;grid-template-columns:1.5fr 1fr;gap:0}
+  .detail .lft{padding:24px 26px 26px;border-right:1px solid var(--line)}
+  .detail .rgt{padding:24px 26px 26px}
+  .mtx{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--line);margin-bottom:18px}
+  .mtx div{padding:14px 16px;border-left:1px solid var(--line);border-top:1px solid var(--line)}
+  .mtx div:nth-child(odd){border-left:0}
+  .mtx div:nth-child(-n+2){border-top:0}
+  .mtx .d{font-size:9.5px;letter-spacing:.18em;color:var(--dim);text-transform:uppercase}
+  .mtx .s{font-size:15px;font-weight:300;margin-top:8px}
+  .mtx .s.ok{color:var(--ok)}
+  .mtx .s.bad{color:var(--accent)}
+  .mono{font-family:"SFMono-Regular",ui-monospace,Menlo,monospace;font-size:11.5px;line-height:2;color:var(--dim)}
+  .mono b{color:var(--muted);font-weight:400;display:inline-block;min-width:78px}
+  .mono .pr{color:var(--accent);margin-right:8px}
+  .mono .r{color:var(--accent)}
+  .mono .g{color:var(--ok)}
+  .detail h4{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim);font-weight:400;margin-bottom:14px}
+  .detail p{font-size:12px;line-height:1.8;color:var(--muted)}
+  .detail p b{color:var(--text);font-weight:400}
+  .detail .cmd{margin-top:16px;border:1px solid var(--line);padding:10px 12px;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--dim);word-break:break-all}
+
+  /* 底部说明 */
+  .foot{border-top:1px solid var(--line);padding-top:24px;display:grid;grid-template-columns:1fr auto;gap:30px;align-items:start}
+  .foot p{font-size:12px;line-height:1.85;color:var(--dim);max-width:760px}
+  .foot p b{color:var(--muted);font-weight:400}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <aside class="rail">
+    <div class="brand">GN</div>
+    <button title="概览"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></button>
+    <button class="active" title="扩展"><svg viewBox="0 0 24 24"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg></button>
+    <button title="外观"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg></button>
+    <button title="电源"><svg viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M6.5 6.5a7 7 0 1 0 11 0"/></svg></button>
+    <div class="spacer"></div>
+    <button title="设置"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg></button>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div class="wordmark">GNOUS</div>
+      <nav>
+        <a href="#">概览</a>
+        <a href="#" class="on">扩展</a>
+        <a href="#">外观</a>
+        <a href="#">电源</a>
+      </nav>
+      <div class="right">
+        <span><i class="dot bad"></i>3 项待处理</span>
+        <span class="clock">21:52</span>
+      </div>
+    </header>
+
+    <div class="scroll">
+      <div class="hero">
+        <div>
+          <div class="eyebrow">自研扩展 · gnome-fixes · v0.1.0</div>
+          <h1>系统修复</h1>
+          <div class="sub">把零散的小补丁收成一处：每项都走「体检 → 应用 → 回退」，随时可逆。</div>
+        </div>
+        <div class="hero-actions">
+          <button class="btn">全部体检</button>
+          <button class="btn solid">应用可用修复</button>
+        </div>
+      </div>
+
+      <div class="metrics">
+        <div class="metric"><div class="k">修复项</div><div class="v">05<small>项</small></div></div>
+        <div class="metric"><div class="k">已应用</div><div class="v">02<small>项</small></div></div>
+        <div class="metric hot"><div class="k">待处理</div><div class="v">03<small>项</small></div></div>
+        <div class="metric"><div class="k">最近体检</div><div class="v">21:44<small>今天</small></div></div>
+      </div>
+
+      <div class="section-head">
+        <h2>修复项</h2>
+        <span>点击展开详情</span>
+      </div>
+
+      <div class="fixes">
+
+        <!-- 01 clipfix -->
+        <div class="fix open" onclick="tog(this,event)">
+          <div class="row">
+            <div class="n">01</div>
+            <div class="name"><b>剪贴板</b><i>终端里能复制、粘不出来 · clipfix</i></div>
+            <div class="state"><span><i class="dot bad"></i>降级 · 补丁未应用</span></div>
+            <div class="acts"><u>体检</u><u class="hot">应用</u><u>回退</u></div>
+            <div class="chev"></div>
+          </div>
+          <div class="detail">
+            <div class="inner">
+              <div class="lft">
+                <div class="mtx">
+                  <div><div class="d">X11 → X11</div><div class="s ok">可用</div></div>
+                  <div><div class="d">X11 → Wayland</div><div class="s bad">丢失</div></div>
+                  <div><div class="d">Wayland → X11</div><div class="s bad">丢失</div></div>
+                  <div><div class="d">Wayland → Wayland</div><div class="s bad">丢失</div></div>
+                </div>
+                <div class="mono">
+                  <div><span class="pr">$</span>gnous-fix clipfix check</div>
+                  <div><b>owner</b>mutter guard window（无属性）</div>
+                  <div><b>source</b>set_selection → 无 send → cancelled</div>
+                  <div><b>patch</b>off · GDK_BACKEND 未设置</div>
+                </div>
+              </div>
+              <div class="rgt">
+                <h4>为什么修不好</h4>
+                <p>用户态拦不住「应用 → compositor」这一步，Wayland 剪贴板只能靠重启会话恢复。这里的补丁是<b>绕行</b>：让终端走 X11。</p>
+                <div class="cmd">systemctl --user set-environment GDK_BACKEND=x11</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 02 多屏幕 -->
+        <div class="fix" onclick="tog(this,event)">
+          <div class="row">
+            <div class="n">02</div>
+            <div class="name"><b>多屏幕</b><i>外接屏缩放后窗口尺寸漂移 · 多屏幕</i></div>
+            <div class="state"><span><i class="dot warn"></i>已应用 · 待验证</span></div>
+            <div class="acts"><u>体检</u><u class="hot">应用</u><u>回退</u></div>
+            <div class="chev"></div>
+          </div>
+          <div class="detail">
+            <div class="inner">
+              <div class="lft">
+                <div class="mtx">
+                  <div><div class="d">内屏 1920×1200</div><div class="s ok">100%</div></div>
+                  <div><div class="d">外接 2560×1440</div><div class="s ok">150%</div></div>
+                  <div><div class="d">跨屏拖动</div><div class="s bad">尺寸漂移</div></div>
+                  <div><div class="d">重启后</div><div class="s ok">保持</div></div>
+                </div>
+                <div class="mono">
+                  <div><span class="pr">$</span>gnous-fix display check</div>
+                  <div><b>scale</b>eDP-1 1.0 · DP-1 1.5</div>
+                  <div><b>issue</b>fractional scaling + Xwayland 老窗口</div>
+                  <div><b>patch</b>on · 强制整数缩放回退</div>
+                </div>
+              </div>
+              <div class="rgt">
+                <h4>做了什么</h4>
+                <p>为 X11 客户端固定 <b>整数缩放</b>，避免跨屏时窗口按分数尺寸重排；原生 Wayland 窗口不受影响。</p>
+                <div class="cmd">gsettings set org.gnome.mutter experimental-features "['scale-monitor-framebuffer']"</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 03 终端字体 -->
+        <div class="fix" onclick="tog(this,event)">
+          <div class="row">
+            <div class="n">03</div>
+            <div class="name"><b>终端字体</b><i>等宽字体字距偏宽 · 终端字体</i></div>
+            <div class="state"><span><i class="dot bad"></i>未应用</span></div>
+            <div class="acts"><u>体检</u><u class="hot">应用</u><u>回退</u></div>
+            <div class="chev"></div>
+          </div>
+          <div class="detail">
+            <div class="inner">
+              <div class="lft">
+                <div class="mtx">
+                  <div><div class="d">等宽字体</div><div class="s ok">JetBrains Mono</div></div>
+                  <div><div class="d">字距</div><div class="s bad">+1.2px</div></div>
+                  <div><div class="d">行高</div><div class="s ok">1.40</div></div>
+                  <div><div class="d">行框偏移</div><div class="s bad">2px</div></div>
+                </div>
+                <div class="mono">
+                  <div><span class="pr">$</span>gnous-fix termfont check</div>
+                  <div><b>profile</b>default · use-system-font false</div>
+                  <div><b>issue</b>Xwayland 下 letter-spacing 继承自 GTK</div>
+                  <div><b>patch</b>off</div>
+                </div>
+              </div>
+              <div class="rgt">
+                <h4>做了什么</h4>
+                <p>把终端 profile 的字体与字距显式写死，不再继承 GTK 主题，<b>避免 Xwayland 下度量被二次放大</b>。</p>
+                <div class="cmd">gsettings set org.gnome.Terminal.Legacy.Profile:/org/gnome/terminal/legacy/profiles:/:PROFILE/ use-system-font false</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 04 root 桌面 -->
+        <div class="fix" onclick="tog(this,event)">
+          <div class="row">
+            <div class="n">04</div>
+            <div class="name"><b>Root 桌面对齐</b><i>root 会话缺拖拽 / portal / 剪贴板 · Root用户桌面功能对齐</i></div>
+            <div class="state"><span><i class="dot bad"></i>未应用 · 需重登</span></div>
+            <div class="acts"><u>体检</u><u class="hot">应用</u><u>回退</u></div>
+            <div class="chev"></div>
+          </div>
+          <div class="detail">
+            <div class="inner">
+              <div class="lft">
+                <div class="mtx">
+                  <div><div class="d">Portal</div><div class="s bad">未注册</div></div>
+                  <div><div class="d">拖拽</div><div class="s bad">失效</div></div>
+                  <div><div class="d">剪贴板</div><div class="s bad">单向</div></div>
+                  <div><div class="d">文件选择器</div><div class="s warn">回退对话框</div></div>
+                </div>
+                <div class="mono">
+                  <div><span class="pr">$</span>gnous-fix rootdesk check</div>
+                  <div><b>user</b>root · uid 0</div>
+                  <div><b>portal</b>xdg-desktop-portal 未在该会话启动</div>
+                  <div><b>patch</b>off · 需重新登录生效</div>
+                </div>
+              </div>
+              <div class="rgt">
+                <h4>做了什么</h4>
+                <p>为 root 会话补上 <b>portal 与拖拽服务</b> 的启动项，并对齐剪贴板方向；应用后需要重新登录。</p>
+                <div class="cmd">systemctl --user enable --now xdg-desktop-portal-gnome.service</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 05 代理 -->
+        <div class="fix" onclick="tog(this,event)">
+          <div class="row">
+            <div class="n">05</div>
+            <div class="name"><b>代理一致性</b><i>终端与应用代理变量不同步 · 代理工具</i></div>
+            <div class="state"><span><i class="dot ok"></i>已应用 · 正常</span></div>
+            <div class="acts"><u>体检</u><u class="hot">应用</u><u>回退</u></div>
+            <div class="chev"></div>
+          </div>
+          <div class="detail">
+            <div class="inner">
+              <div class="lft">
+                <div class="mtx">
+                  <div><div class="d">GUI 代理</div><div class="s ok">已设置</div></div>
+                  <div><div class="d">终端变量</div><div class="s ok">一致</div></div>
+                  <div><div class="d">SOCKS</div><div class="s ok">7891</div></div>
+                  <div><div class="d">NO_PROXY</div><div class="s ok">已配置</div></div>
+                </div>
+                <div class="mono">
+                  <div><span class="pr">$</span>gnous-fix proxy check</div>
+                  <div><b>env</b>http_proxy / https_proxy / all_proxy 一致</div>
+                  <div><b>gsettings</b>mode manual · 与 env 同步</div>
+                  <div><b>patch</b>on</div>
+                </div>
+              </div>
+              <div class="rgt">
+                <h4>做了什么</h4>
+                <p>把 <b>gsettings 代理</b>与 <b>shell 环境变量</b>双向同步，避免 GUI 能上网、终端不能（或反之）。</p>
+                <div class="cmd">gsettings set org.gnome.system.proxy mode 'manual'</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="foot">
+        <p>这些都不是「根治」：每项只是把受影响的程序绕到没坏的通道，或补齐缺失的启动项。所有改动<b>不写系统文件</b>，随时可回退；涉及会话的改动会标注「需重登」。</p>
+        <span class="pill warn">5 项 · 0 项写系统文件</span>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+function tog(el, e){
+  if (e.target.tagName === 'U') return;   // 点动作按钮不展开
+  el.classList.toggle('open');
+}
+</script>
+</body>
+</html>

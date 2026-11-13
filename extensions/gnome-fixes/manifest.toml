@@ -1,0 +1,16 @@
+id = "gnome-fixes"
+name = "系统修复"
+summary = "把零散的 GNOME 桌面小补丁收在一处，每项都走体检 / 应用 / 回退"
+version = "0.1.0"
+capabilities = ["page"]
+icon = "wrench"
+
+# 页面级扩展：挂在「扩展」分区，与核心的 Installed 并列
+[nav]
+label = "Fixes"
+section = "extensions"
+order = 20
+
+[[views]]
+id = "fixes"
+label = "Fixes"

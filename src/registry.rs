@@ -56,10 +56,16 @@ pub struct View {
 
 /// Manifests compiled into the binary. Adding a page-level extension means
 /// adding its manifest here (and its renderer to `pages/`).
-const MANIFESTS: &[(&str, &str)] = &[(
-    "extensions/processes/manifest.toml",
-    include_str!("../extensions/processes/manifest.toml"),
-)];
+const MANIFESTS: &[(&str, &str)] = &[
+    (
+        "extensions/processes/manifest.toml",
+        include_str!("../extensions/processes/manifest.toml"),
+    ),
+    (
+        "extensions/gnome-fixes/manifest.toml",
+        include_str!("../extensions/gnome-fixes/manifest.toml"),
+    ),
+];
 
 static CACHE: OnceLock<Vec<Manifest>> = OnceLock::new();
 
@@ -109,6 +115,15 @@ mod tests {
         );
         assert_eq!(processes.views.len(), 5);
         assert!(processes.views.iter().any(|v| v.id == "table"));
+        let fixes = all
+            .iter()
+            .find(|m| m.id == "gnome-fixes")
+            .expect("gnome-fixes");
+        assert_eq!(
+            fixes.nav.as_ref().map(|n| n.section.as_str()),
+            Some("extensions")
+        );
+        assert_eq!(fixes.views.len(), 1);
     }
 
     #[test]
@@ -116,5 +131,8 @@ mod tests {
         let overview = views_for("overview");
         assert_eq!(overview.len(), 5);
         assert!(views_for("appearance").is_empty());
+        let extensions = views_for("extensions");
+        assert_eq!(extensions.len(), 1);
+        assert_eq!(extensions[0].1.id, "fixes");
     }
 }

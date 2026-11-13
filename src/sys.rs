@@ -432,7 +432,7 @@ fn uptime_label() -> String {
     }
 }
 
-fn local_clock() -> String {
+pub fn local_clock() -> String {
     unsafe {
         let now = libc::time(std::ptr::null_mut());
         let mut tm: libc::tm = std::mem::zeroed();

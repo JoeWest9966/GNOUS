@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GNOUS · clipfix · B 开关优先</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .band{border:1px solid var(--line);display:flex;align-items:stretch;margin-bottom:1px}
+  .band .state{flex:1;padding:34px 36px 38px}
+  .band .k{font-size:10.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim);margin-bottom:20px}
+  .band .big{font-size:96px;font-weight:200;letter-spacing:-.045em;line-height:.85}
+  .band .big small{font-size:15px;font-weight:300;letter-spacing:0;color:var(--muted);margin-left:14px;vertical-align:14px}
+  .band.on .big{color:var(--text)}
+  .band .desc{font-size:12.5px;color:var(--muted);margin-top:18px;line-height:1.7;max-width:520px}
+  .band .ctl{width:280px;border-left:1px solid var(--line);display:flex;flex-direction:column;justify-content:space-between;padding:30px 32px}
+  .switch{width:100%;height:64px;border:1px solid var(--line-strong);position:relative;cursor:pointer;background:none;display:flex;align-items:center;padding:0 6px;transition:.2s}
+  .switch .thumb{width:52px;height:52px;background:var(--dim);transition:.24s cubic-bezier(.3,.8,.3,1)}
+  .switch .lbl{margin-left:auto;padding-right:12px;font-size:10.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim)}
+  .switch.on{border-color:var(--accent)}
+  .switch.on .thumb{margin-left:calc(100% - 52px);background:var(--accent)}
+  .switch.on .lbl{color:var(--accent)}
+  .cmd{font-family:"SFMono-Regular",ui-monospace,Menlo,monospace;font-size:11px;color:var(--dim);line-height:1.7;word-break:break-all}
+
+  .chips{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line);border-top:0;margin-bottom:46px}
+  .chip{padding:18px 22px;border-left:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .chip:first-child{border-left:0}
+  .chip .d{font-size:11px;letter-spacing:.12em;color:var(--muted);text-transform:uppercase}
+  .chip .s{font-size:11px;letter-spacing:.1em}
+  .chip .s.ok{color:var(--ok)}
+  .chip .s.bad{color:var(--accent)}
+
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .step{padding:30px 28px 34px;border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:250px}
+  .step:first-child{border-left:0}
+  .step .n{font-size:52px;font-weight:200;color:var(--line-strong);letter-spacing:-.03em;line-height:1}
+  .step h3{font-size:14px;font-weight:500;letter-spacing:.01em;margin:22px 0 10px}
+  .step p{font-size:12.5px;line-height:1.7;color:var(--muted);flex:1}
+  .step .go{margin-top:20px;align-self:flex-start;font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--text);border-bottom:1px solid var(--line-strong);padding-bottom:5px;cursor:pointer}
+  .step.danger .n{color:rgba(227,25,55,.35)}
+  .step.danger h3{color:var(--accent)}
+
+  .foot{margin-top:34px;display:flex;justify-content:space-between;align-items:baseline;gap:24px}
+  .foot p{font-size:12px;color:var(--dim);line-height:1.8;max-width:760px}
+  .foot p b{color:var(--muted);font-weight:400}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <aside class="rail">
+    <div class="brand">GN</div>
+    <button title="概览"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></button>
+    <button class="active" title="扩展"><svg viewBox="0 0 24 24"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg></button>
+    <button title="外观"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg></button>
+    <button title="电源"><svg viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M6.5 6.5a7 7 0 1 0 11 0"/></svg></button>
+    <div class="spacer"></div>
+    <button title="设置"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg></button>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div class="wordmark">GNOUS</div>
+      <nav>
+        <a href="#">概览</a>
+        <a href="#" class="on">扩展</a>
+        <a href="#">外观</a>
+        <a href="#">电源</a>
+      </nav>
+      <div class="right">
+        <span><i class="dot bad"></i>会话 · Wayland</span>
+        <span class="clock">21:47</span>
+      </div>
+    </header>
+
+    <div class="scroll">
+      <div class="hero" style="margin-bottom:36px">
+        <div>
+          <div class="eyebrow">扩展 · clipfix</div>
+          <h1>剪贴板</h1>
+          <div class="sub">终端里能复制、粘不出来 · 问题在 compositor，不在终端</div>
+        </div>
+      </div>
+
+      <div class="band" id="band">
+        <div class="state">
+          <div class="k">X11 加固补丁</div>
+          <div class="big" id="big">OFF<small id="bignote">终端仍走 Wayland 原生</small></div>
+          <div class="desc">开启后仅一条改动：<b style="color:var(--text);font-weight:400">systemctl --user set-environment GDK_BACKEND=x11</b>，让终端跑在 Xwayland 里，用没坏的 X11 剪贴板。</div>
+        </div>
+        <div class="ctl">
+          <button class="switch" id="sw" onclick="document.getElementById('sw').classList.toggle('on');toggleState()">
+            <div class="thumb"></div>
+            <div class="lbl" id="lbl">未启用</div>
+          </button>
+          <div class="cmd" id="cmd">$ clipfix check<br>session &nbsp; wayland<br>patch &nbsp;&nbsp;&nbsp; off</div>
+        </div>
+      </div>
+
+      <div class="chips">
+        <div class="chip"><span class="d">X11 → X11</span><span class="s ok">可用</span></div>
+        <div class="chip"><span class="d">X11 → WL</span><span class="s bad">丢失</span></div>
+        <div class="chip"><span class="d">WL → X11</span><span class="s bad">丢失</span></div>
+        <div class="chip"><span class="d">WL → WL</span><span class="s bad">丢失</span></div>
+      </div>
+
+      <div class="section-head">
+        <h2>三步生效</h2>
+        <span>不落系统文件 · 随时回退</span>
+      </div>
+
+      <div class="steps">
+        <div class="step">
+          <div class="n">01</div>
+          <h3>体检</h3>
+          <p>抓 <b style="color:var(--muted)">XGetSelectionOwner</b> 与 <b style="color:var(--muted)">WAYLAND_DEBUG</b>，确认剪贴板坏在 compositor 层，并记录终端当前后端。</p>
+          <div class="go">运行 check.sh</div>
+        </div>
+        <div class="step">
+          <div class="n">02</div>
+          <h3>加固</h3>
+          <p>写入 <b style="color:var(--muted)">GDK_BACKEND=x11</b> 到 user 环境变量，不碰任何进程、不写系统文件，gtk 应用下次启动即生效。</p>
+          <div class="go">应用补丁</div>
+        </div>
+        <div class="step danger">
+          <div class="n">03</div>
+          <h3>重启终端</h3>
+          <p>已运行的 gnome-terminal-server 需要重启才会读新环境变量，<b style="color:var(--accent)">会关掉所有终端窗口</b>，请先保存工作。</p>
+          <div class="go">重启终端 server</div>
+        </div>
+      </div>
+
+      <div class="foot">
+        <p>补丁不能「修好」Wayland 剪贴板 —— 用户态拦不住「应用 → compositor」这一步。它只是把终端绕到 X11 通道，<b>想真正恢复必须重启图形会话</b>。</p>
+        <span class="pill warn">不是根治</span>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+function toggleState(){
+  const on = document.getElementById('sw').classList.contains('on');
+  document.getElementById('big').innerHTML = (on ? 'ON' : 'OFF') +
+    '<small id="bignote">' + (on ? '终端下次启动走 X11' : '终端仍走 Wayland 原生') + '</small>';
+  document.getElementById('lbl').textContent = on ? '已启用' : '未启用';
+  document.getElementById('band').classList.toggle('on', on);
+  document.getElementById('cmd').innerHTML = '$ clipfix check<br>session &nbsp; wayland<br>patch &nbsp;&nbsp;&nbsp; ' + (on ? 'on&nbsp;&nbsp;(GDK_BACKEND=x11)' : 'off');
+}
+</script>
+</body>
+</html>

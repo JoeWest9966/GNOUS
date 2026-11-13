@@ -90,6 +90,10 @@ default = true
 | 扩展 | 层级 | 入口 |
 | --- | --- | --- |
 | `processes` | 页面级 | Overview 分区下的 5 个视图：Table / Live / Memory / Tree / Groups |
+| `gnome-fixes` | 页面级 | Extensions 分区下的 Fixes：把 `/home/root/GNOME/` 的 5 个小补丁收成一处，统一「体检 / 应用 / 回退」，状态来自外部工具的真实输出 |
+
+`GNOUS_FIXES_ROOT` 可覆盖工具根目录（默认 `/home/root/GNOME`）；工具缺失时显示失败原因，不伪造状态。
+带副作用的外部命令一律二次确认，危险 flags（`--now` / `--restart` / `--run --yes`）不从 UI 触发。
 
 新增页面级扩展的完整链路：`extensions/<id>/manifest.toml` → `MANIFESTS` 登记 →
 `src/pages/<id>.rs` 实现 `body()` → `src/pages/mod.rs` 导出。

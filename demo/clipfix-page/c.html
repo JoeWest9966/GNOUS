@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GNOUS · clipfix · C 主从</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .master{flex:1;display:grid;grid-template-columns:368px 1fr;min-height:0}
+  .list{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+  .list .head{padding:22px 24px 18px;border-bottom:1px solid var(--line)}
+  .list .search{border:1px solid var(--line);padding:9px 12px;font-size:12px;color:var(--dim);display:flex;justify-content:space-between;letter-spacing:.03em}
+  .list .search em{font-style:normal;font-size:10px;letter-spacing:.14em;color:var(--dim);border:1px solid var(--line);padding:2px 6px}
+  .filters{display:flex;gap:6px;margin-top:12px}
+  .filters span{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);padding:4px 9px;border:1px solid var(--line);cursor:pointer}
+  .filters span.on{color:var(--text);border-color:var(--line-strong)}
+  .rows{overflow-y:auto;flex:1}
+  .rows::-webkit-scrollbar{width:6px}
+  .rows::-webkit-scrollbar-thumb{background:#222}
+  .row{display:flex;align-items:center;gap:14px;padding:15px 24px;border-bottom:1px solid var(--line);cursor:pointer;position:relative}
+  .row:hover{background:var(--surface)}
+  .row.sel{background:var(--surface-2)}
+  .row.sel::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--accent)}
+  .row .ttl{flex:1;min-width:0}
+  .row .ttl b{display:block;font-size:12.5px;font-weight:400;letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .ttl i{display:block;font-style:normal;font-size:10.5px;color:var(--dim);margin-top:4px;letter-spacing:.04em}
+  .row .badge{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);border:1px solid var(--line);padding:3px 6px}
+  .row .badge.own{color:var(--accent);border-color:rgba(227,25,55,.4)}
+  .tt{width:30px;height:16px;border:1px solid var(--line-strong);position:relative;flex:0 0 auto}
+  .tt::after{content:"";position:absolute;top:2px;left:2px;width:10px;height:10px;background:var(--dim);transition:.2s}
+  .tt.on{border-color:var(--text)}
+  .tt.on::after{left:16px;background:var(--text)}
+
+  .detail{overflow-y:auto;padding:34px 40px 56px;min-width:0}
+  .detail::-webkit-scrollbar{width:6px}
+  .detail::-webkit-scrollbar-thumb{background:#222}
+  .dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding-bottom:26px;border-bottom:1px solid var(--line)}
+  .dhead h1{font-size:34px}
+  .dhead .meta{font-size:11.5px;color:var(--dim);margin-top:10px;letter-spacing:.06em}
+  .tabs{display:flex;gap:26px;border-bottom:1px solid var(--line);margin-bottom:30px}
+  .tabs a{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);text-decoration:none;padding:16px 0;border-bottom:1px solid transparent}
+  .tabs a.on{color:var(--text);border-bottom-color:var(--accent)}
+
+  .verdict{display:flex;align-items:baseline;gap:18px;margin-bottom:26px}
+  .verdict .v{font-size:54px;font-weight:200;letter-spacing:-.03em;line-height:1}
+  .verdict .v.bad{color:var(--accent)}
+  .verdict .t{font-size:12.5px;color:var(--muted);max-width:520px;line-height:1.7}
+
+  table{width:100%;border-collapse:collapse;margin-bottom:32px}
+  th{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);font-weight:400;text-align:left;padding:0 0 12px;border-bottom:1px solid var(--line)}
+  td{font-size:12.5px;padding:13px 0;border-bottom:1px solid var(--line);color:var(--muted)}
+  td:first-child{color:var(--text);font-size:12px}
+  td.r{text-align:right;font-variant-numeric:tabular-nums}
+
+  .actions{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);margin-bottom:30px}
+  .actions .a{padding:16px 20px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;transition:.15s}
+  .actions .a:hover{background:var(--surface-2)}
+  .actions .a span{font-size:12px}
+  .actions .a em{font-style:normal;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+  .actions .a.danger span{color:var(--accent)}
+
+  .note{border-top:1px solid var(--line);padding-top:22px;font-size:12px;line-height:1.85;color:var(--dim)}
+  .note b{color:var(--muted);font-weight:400}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <aside class="rail">
+    <div class="brand">GN</div>
+    <button title="概览"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></button>
+    <button class="active" title="扩展"><svg viewBox="0 0 24 24"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg></button>
+    <button title="外观"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg></button>
+    <button title="电源"><svg viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M6.5 6.5a7 7 0 1 0 11 0"/></svg></button>
+    <div class="spacer"></div>
+    <button title="设置"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg></button>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div class="wordmark">GNOUS</div>
+      <nav>
+        <a href="#">概览</a>
+        <a href="#" class="on">扩展</a>
+        <a href="#">外观</a>
+        <a href="#">电源</a>
+      </nav>
+      <div class="right">
+        <span><i class="dot"></i>17 个扩展</span>
+        <span class="clock">21:47</span>
+      </div>
+    </header>
+
+    <div class="master">
+      <div class="list">
+        <div class="head">
+          <div class="search"><span>搜索扩展</span><em>⌘K</em></div>
+          <div class="filters"><span class="on">全部</span><span>已启用</span><span>自研</span></div>
+        </div>
+        <div class="rows">
+          <div class="row sel">
+            <div class="ttl"><b>剪贴板 · clipfix</b><i>X11 剪贴板加固</i></div>
+            <span class="badge own">自研</span>
+            <div class="tt"></div>
+          </div>
+          <div class="row">
+            <div class="ttl"><b>Dash to Dock</b><i>可配置的应用 Dock</i></div>
+            <span class="badge">系统</span>
+            <div class="tt on"></div>
+          </div>
+          <div class="row">
+            <div class="ttl"><b>Blur my Shell</b><i>模糊与透明效果</i></div>
+            <span class="badge">系统</span>
+            <div class="tt on"></div>
+          </div>
+          <div class="row">
+            <div class="ttl"><b>AppIndicator Support</b><i>托盘图标支持</i></div>
+            <span class="badge">系统</span>
+            <div class="tt on"></div>
+          </div>
+          <div class="row">
+            <div class="ttl"><b>Just Perfection</b><i>界面元素微调</i></div>
+            <span class="badge">系统</span>
+            <div class="tt"></div>
+          </div>
+          <div class="row">
+            <div class="ttl"><b>User Themes</b><i>自定义 shell 主题</i></div>
+            <span class="badge">系统</span>
+            <div class="tt"></div>
+          </div>
+          <div class="row">
+            <div class="ttl"><b>窗口平铺 · tilefix</b><i>半屏与吸附行为</i></div>
+            <span class="badge own">自研</span>
+            <div class="tt on"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="detail">
+        <div class="dhead">
+          <div>
+            <div class="eyebrow">自研扩展 · v0.1.0</div>
+            <h1>剪贴板</h1>
+            <div class="meta">clipfix · GNOME 48.7 / mutter 48.7 · Wayland 会话</div>
+          </div>
+          <div style="display:flex;gap:10px">
+            <button class="btn ghost">重新体检</button>
+            <button class="btn solid">应用补丁</button>
+          </div>
+        </div>
+
+        <div class="tabs">
+          <a href="#" class="on">状态</a>
+          <a href="#">操作</a>
+          <a href="#">关于</a>
+        </div>
+
+        <div class="verdict">
+          <div class="v bad">DEGRADED</div>
+          <div class="t">compositor 丢弃了 <b style="color:var(--text);font-weight:400">set_selection</b>，剪贴板在 Wayland 方向完全不可用；当前补丁未应用。</div>
+        </div>
+
+        <table>
+          <tr><th>方向</th><th>结果</th><th class="r">证据</th></tr>
+          <tr><td>X11 → X11</td><td style="color:var(--ok)">可用</td><td class="r">Xwayland 内部剪贴板正常</td></tr>
+          <tr><td>X11 → Wayland</td><td style="color:var(--accent)">丢失</td><td class="r">owner = mutter 隐形窗口</td></tr>
+          <tr><td>Wayland → X11</td><td style="color:var(--accent)">丢失</td><td class="r">无 send，几秒后 cancelled</td></tr>
+          <tr><td>Wayland → Wayland</td><td style="color:var(--accent)">丢失</td><td class="r">set_selection 后不取数据</td></tr>
+        </table>
+
+        <div class="actions">
+          <div class="a"><span>应用 X11 加固</span><em>GDK_BACKEND=x11</em></div>
+          <div class="a"><span>回退到启用前</span><em>off</em></div>
+          <div class="a"><span>查看自检日志</span><em>log</em></div>
+          <div class="a danger"><span>重启终端 server</span><em>--now</em></div>
+        </div>
+
+        <div class="note">
+          这个补丁不是修复，而是绕行：终端改走 X11 后，剪贴板走的是没坏的 Xwayland 通道。
+          想真正恢复 Wayland 剪贴板，<b>只能重启图形会话</b>。
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>
