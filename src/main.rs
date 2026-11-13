@@ -1,3 +1,4 @@
+pub mod displays;
 mod ext;
 mod fixes;
 pub mod fixes_backend;
@@ -179,6 +180,8 @@ pub(crate) struct App {
     root_align: root_align::State,
     /// State of the proxy-tools console (relay + control plane diagnostics).
     proxy: proxy_tools::State,
+    /// State of the displays console (mutter layout).
+    displays: displays::State,
     /// Startup layouts: pages, splits and the boot policy (JSON-backed).
     startup: startup::State,
     /// Snapshot + action log of the openshell panel.
@@ -321,6 +324,7 @@ impl App {
             fixes_apply_armed: false,
             root_align: root_align::State::new(),
             proxy: proxy_tools::State::new(),
+            displays: displays::State::new(),
             startup: startup::State::load(),
             openshell: openshell::State::new(),
             selected: None,
@@ -484,6 +488,7 @@ impl App {
         self.fixes_apply_armed = false;
         self.root_align.armed = None;
         self.openshell.armed = None;
+        self.displays.armed = None;
         // Leaving the process plugin puts the change detector to sleep; coming
         // back establishes a fresh baseline in `go_page`.
         self.table.prime(&self.proc.processes);
@@ -493,6 +498,9 @@ impl App {
         // the plugin's own view and nothing else would read the gateway.
         if page.plugin == "proxy-tools" {
             self.enter_proxy_tools_page(cx);
+        }
+        if page.plugin == "displays" {
+            self.enter_displays_page(cx);
         }
         if page.plugin == "root-align" {
             self.enter_root_align_page(cx);
@@ -511,6 +519,7 @@ impl App {
         self.fixes_apply_armed = false;
         self.root_align.armed = None;
         self.openshell.armed = None;
+        self.displays.armed = None;
         self.close_process_overlays();
         if page.plugin == "processes" && !was_processes {
             // Sampling stops while away from the plugin. Re-entering after a
@@ -519,6 +528,9 @@ impl App {
         }
         if page.plugin == "proxy-tools" {
             self.enter_proxy_tools_page(cx);
+        }
+        if page.plugin == "displays" {
+            self.enter_displays_page(cx);
         }
         if page.plugin == "root-align" {
             self.enter_root_align_page(cx);
@@ -672,6 +684,65 @@ impl App {
 
     pub(crate) fn select_proxy_face(&mut self, face: usize, cx: &mut Context<Self>) {
         self.proxy.face = face;
+        cx.notify();
+    }
+
+    /// First entry into the displays page runs one read-only status probe.
+    fn enter_displays_page(&mut self, cx: &mut Context<Self>) {
+        if !self.displays.has_status() && !self.displays.busy {
+            self.run_displays(displays::Op::Status, cx);
+        }
+    }
+
+    /// Run one displays op. `preview` only asks mutter to validate; `apply`
+    /// changes the real layout and needs a second click; `handover` prints
+    /// commands and executes nothing.
+    pub(crate) fn run_displays(&mut self, op: displays::Op, cx: &mut Context<Self>) {
+        if self.displays.busy {
+            return;
+        }
+        if op.is_mutating() && self.displays.armed != Some(op) {
+            self.displays.armed = Some(op);
+            cx.notify();
+            return;
+        }
+        self.displays.armed = None;
+        self.displays.busy = true;
+        let weak = cx.entity().downgrade();
+        let task = cx
+            .background_executor()
+            .spawn(async move { displays::run(op) });
+        cx.spawn(async move |_, cx| {
+            let outcome = task.await;
+            let recheck =
+                outcome.changed && matches!(outcome.op, displays::Op::Apply | displays::Op::Revert);
+            let _ = weak.update(cx, |app: &mut App, cx| {
+                app.displays.busy = false;
+                app.displays.absorb(outcome, true);
+                cx.notify();
+                if recheck {
+                    app.run_displays(displays::Op::Status, cx);
+                }
+            });
+            cx.refresh();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub(crate) fn select_displays_tab(&mut self, tab: displays::Tab, cx: &mut Context<Self>) {
+        self.displays.tab = tab;
+        // A tab with no result would read as "broken"; run its op instead.
+        // Only STATUS/DOCTOR/PREVIEW/HANDOVER are read-only — APPLY/REVERT
+        // still require an explicit click on the armed button.
+        if self.displays.outcome(tab).is_none() && !self.displays.busy && !tab.op().is_mutating() {
+            self.run_displays(tab.op(), cx);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn select_displays_face(&mut self, face: usize, cx: &mut Context<Self>) {
+        self.displays.face = face;
         cx.notify();
     }
 
@@ -1494,6 +1565,7 @@ impl Render for App {
                             fixes_apply_armed: self.fixes_apply_armed,
                             root_align: &self.root_align,
                             proxy: &self.proxy,
+                            displays: &self.displays,
                             startup: &self.startup,
                             openshell: &self.openshell,
                             content_led: &self.content_led,
@@ -1947,6 +2019,8 @@ pub(crate) struct Overview<'a> {
     pub(crate) root_align: &'a root_align::State,
     /// Relay / control-plane state of the proxy-tools extension.
     pub(crate) proxy: &'a proxy_tools::State,
+    /// Mutters' display layout console.
+    pub(crate) displays: &'a displays::State,
     /// Startup layouts model + probes.
     pub(crate) startup: &'a startup::State,
     /// Snapshot and action log of the openshell panel.
@@ -1966,6 +2040,7 @@ fn content(overview: &Overview, cx: &mut Context<App>) -> impl IntoElement {
         ("gnome-fixes", _) => pages::gnome_fixes::body(overview, &weak),
         ("root-align", _) => pages::root_align::body(overview, &weak),
         ("proxy-tools", _) => pages::proxy_tools::body(overview, &weak),
+        ("displays", _) => pages::displays::body(overview, &weak),
         ("startup-layouts", view) => pages::startup_layouts::body(view, overview, &weak),
         ("openshell", view) => pages::openshell::body(view, overview, &weak),
         (_, label) => placeholder(label),
@@ -3024,6 +3099,9 @@ fn main() {
         .is_some_and(|arg| arg == "--builtin-proxy-relay")
     {
         std::process::exit(proxy_tools::relay_cli(&args[1..]));
+    }
+    if args.iter().any(|arg| arg == "--builtin-display-auto") {
+        std::process::exit(displays::auto_cli(&args[1..]));
     }
     if args.iter().any(|arg| arg == "--version" || arg == "-V") {
         println!("gnous {VERSION}");

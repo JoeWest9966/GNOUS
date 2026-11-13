@@ -81,6 +81,10 @@ const MANIFESTS: &[(&str, &str)] = &[
         "extensions/proxy-tools/manifest.toml",
         include_str!("../extensions/proxy-tools/manifest.toml"),
     ),
+    (
+        "extensions/displays/manifest.toml",
+        include_str!("../extensions/displays/manifest.toml"),
+    ),
 ];
 
 static CACHE: OnceLock<Vec<Manifest>> = OnceLock::new();
@@ -194,10 +198,11 @@ mod tests {
         assert_eq!(overview.len(), 5);
         assert!(views_for("appearance").is_empty());
         let extensions = views_for("extensions");
-        assert_eq!(extensions.len(), 3);
+        assert_eq!(extensions.len(), 4);
         assert_eq!(extensions[0].1.id, "fixes");
         assert_eq!(extensions[1].1.id, "align");
         assert_eq!(extensions[2].1.id, "proxy");
+        assert_eq!(extensions[3].1.id, "displays");
         assert_eq!(views_for("startup").len(), 4);
         // The sandbox console owns its own rail section, so its eight views are
         // no longer counted against Extensions.

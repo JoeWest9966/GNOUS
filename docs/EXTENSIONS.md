@@ -94,6 +94,7 @@ default = true
 | `root-align` | 页面级 | Extensions 分区下的 Align：C 方案诊断台，8 个 systemd 用户单元按功能域分组；`status` / `doctor` / 动作 stdout 原样展示，健康结论来自内建 facts |
 | `startup-layouts` | 页面级 | 左列独立分区 Startup，四个视图 Layouts / Boot / Journal / 项目：勾选开机铺开的页面、按比例排列窗口、配置启动策略、登记自研启动项目脚本 |
 | `proxy-tools` | 页面级 | Extensions 分区下的 Proxy：诊断台三面（只读诊断 / GNOUS 自带中继 / 控制面只读展示）；`status` / `doctor` 只读，`apply` / `revert` 只写 GNOUS 自己的配置与单元文件，`handover` 只打印交棒命令，旧 `j1900-proxy.service` 只读 |
+| `displays` | 页面级 | Extensions 分区下的 Display：诊断台三面（只读诊断 / 布局·mutter / 接管·GNOUS）；`status` / `doctor` 只读，`preview` 走 mutter 的 verify 不生效，`apply` 二次确认后落地并重新读一次确认，`handover` 只打印命令，旧 `display-mode.timer` 只读 |
 | `openshell` | 页面级 | 左列独立分区 OpenShell（立方体图标，排在 Extensions 之后）：8 个视图 / 45 个区块独占顶栏，全部读 `openshell` CLI 的真实 stdout（网关、沙箱、执行、转发、策略、凭据、日志、工具），失败原样展示；进入分区即探测一次 |
 
 `startup-layouts` 的配置存在 `$XDG_CONFIG_HOME/gnous/startup.json`（缺省 `~/.config/gnous/startup.json`），
@@ -120,6 +121,13 @@ spawn 闸门（受保护单元 / 端口、禁止的 systemd 动词、`gsettings`
 配置在 `~/.config/gnous/proxy-tools.json`，单元文件是 GNOUS 自己的
 `gnous-proxy-relay.service`，旧单元只读。开发期约束见
 `extensions/proxy-tools/DEV-SAFETY.md`。
+
+`src/displays/` 是多屏幕的深模块：`run(op)` 返回 `Outcome { ok, output, facts }`，
+UI 只用 facts 判健康。显示状态来自 mutter 的 `GetCurrentState`（`src/displays/dbus.rs`
+是一个只依赖 std 的小型 D-Bus 客户端，含 `Hello`/`EXTERNAL`/签名编解码单测），
+写入走 `ApplyMonitorsConfig` 且**先 verify 再持久化**，落地后重新读一次确认；
+配置在 `~/.config/gnous/displays.json`，单元文件是 GNOUS 自己的 `gnous-display.*`，
+老脚本的 `display-mode.timer` 只读，交棒命令只打印。
 
 新增页面级扩展的完整链路：`extensions/<id>/manifest.toml` → `MANIFESTS` 登记 →
 `src/pages/<id>.rs` 实现 `body()` → `src/pages/mod.rs` 导出。

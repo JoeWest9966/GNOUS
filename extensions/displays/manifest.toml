@@ -1,0 +1,16 @@
+id = "displays"
+name = "多屏幕"
+summary = "外接屏 / 内置屏布局：状态取自 mutter 的真实应答，APPLY 先 verify 再落地，老脚本的 timer 只读"
+version = "0.1.0"
+capabilities = ["page"]
+icon = "monitor"
+
+# 页面级扩展：挂在「扩展」分区，排在 Proxy 之后
+[nav]
+label = "Display"
+section = "extensions"
+order = 50
+
+[[views]]
+id = "displays"
+label = "Display"

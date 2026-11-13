@@ -63,6 +63,9 @@
   `gnome-fixes` 把 5 个 GNOME 小补丁收成「体检 / 应用 / 回退」；其中剪贴板与 root
   桌面对齐已内建为 `src/fixes_backend/` 的 Rust 后端（结构化 facts / JSON 状态 / 审计日志），
   `root-align` 是同一后端的 C 方案诊断台，按功能域列出 8 个 systemd 用户单元；
+  `displays` 接管外接屏 / 内置屏的布局：状态取自 mutter 的 `GetCurrentState`，
+  APPLY 先 `METHOD_VERIFY` 校验再持久化、落地后重读确认；老脚本的
+  `display-mode.timer` 只读，交棒命令只打印。
   `proxy-tools` 把本机代理中继（原本是 `/home/root/GNOME` 里的 python + bash 脚本）
   重写成自带的标准库 Rust 中继，并给出只读诊断台：旧单元只读、危险 systemd 动词
   在接口层不存在、交棒命令只打印不执行。
@@ -111,7 +114,8 @@ src/
 ├── fixes_backend/ # clipfix / root-align 共用的内建 Rust 后端、JSON 状态与审计
 ├── root_align.rs # root-align 页面状态与内建后端适配
 ├── proxy_tools/ # 代理工具内建后端：guard 闸门 / std 中继 / 只读诊断 / 配置
-├── pages/     # 页面级扩展渲染器：processes / gnome_fixes / root_align / proxy_tools
+├── displays/  # 多屏幕内建后端：std 写的 D-Bus 客户端 / mutter 布局 / 配置 / 单元
+├── pages/     # 页面级扩展渲染器：processes / gnome_fixes / root_align / proxy_tools / displays
 ├── toggles.rs # 右侧快捷开关：gsettings bool/choice 与外部命令，缺失即置灰
 ├── theme.rs   # 设计 token（颜色 / 字体 / 字距 / 行高）与文本辅助函数
 └── icons.rs   # 内联 SVG 线性图标（stroke 1.3，与 demo 完全一致）

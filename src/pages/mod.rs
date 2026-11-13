@@ -4,6 +4,7 @@
 //! the top bar; the matching module here decides how they look. Adding a view
 //! means adding an entry to the manifest and a match arm in the module.
 
+pub mod displays;
 pub mod gnome_fixes;
 pub mod openshell;
 pub mod processes;
