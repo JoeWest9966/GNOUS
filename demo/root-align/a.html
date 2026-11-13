@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GNOUS · A · Root 桌面对齐 / 单元矩阵</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .back{position:absolute;right:40px;top:72px;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);text-decoration:none;z-index:4}
+  .back:hover{color:var(--text)}
+  .layout{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:1px;background:var(--line);border:1px solid var(--line)}
+  .layout>div{background:var(--surface)}
+  .actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:26px}
+  .actions .btn{padding:10px 12px;letter-spacing:.1em;font-size:10px}
+  .actions .btn.wide{grid-column:span 2}
+  .kv{margin-top:22px}
+  .outputs{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);margin-top:20px}
+  .outputs>div{background:var(--surface);padding:18px 20px}
+  .outputs .id{font-family:ui-monospace,Menlo,monospace;color:var(--dim);font-size:10px;letter-spacing:.12em}
+  .outputs .name{font-size:12px;color:var(--text);margin-top:9px;word-break:break-all}
+  .outputs .spec{font-size:11px;color:var(--muted);margin-top:7px}
+  .outputs .st{font-size:10px;color:var(--warn);margin-top:10px;letter-spacing:.12em;text-transform:uppercase}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="brand">GN</div>
+    <button title="概览"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></button>
+    <button class="active" title="扩展"><svg viewBox="0 0 24 24"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></svg></button>
+    <button title="外观"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg></button>
+    <button title="设备"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13"/><path d="M8 21h8M12 17v4"/></svg></button>
+    <button title="电源"><svg viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M6.5 6.5a7 7 0 1 0 11 0"/></svg></button>
+    <div class="spacer"></div>
+    <button title="设置"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg></button>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div class="wordmark">GNOUS</div>
+      <nav>
+        <a href="#">INSTALLED</a>
+        <a href="#">PROCESSES</a>
+        <a href="#">FIXES</a>
+        <a href="#" class="on">ALIGN</a>
+      </nav>
+      <div class="right"><span><i class="dot"></i>System nominal</span><span class="clock">11:43</span></div>
+    </header>
+
+    <div class="scroll">
+      <a class="back" href="index.html">← 方案选型</a>
+
+      <div class="hero">
+        <div>
+          <div class="eyebrow">自研扩展 · root-align · v0.1.0</div>
+          <h1>Root 桌面对齐</h1>
+          <div class="sub">让 root 的 GNOME 会话拥有与普通用户一致的音频、媒体控制与全局搜索。只在 <b style="color:var(--text);font-weight:400">~/.config/systemd/user</b> 写空赋值覆盖，不改 /usr/lib，随时可回退。</div>
+        </div>
+        <div class="hero-actions">
+          <button class="btn ghost">刷新状态</button>
+          <button class="btn">DOCTOR</button>
+        </div>
+      </div>
+
+      <div class="metrics">
+        <div class="metric"><div class="k">覆盖单元</div><div class="v">08<small>/ 08</small></div></div>
+        <div class="metric good"><div class="k">活动单元</div><div class="v">08<small>/ 08</small></div></div>
+        <div class="metric"><div class="k">输出设备</div><div class="v">02<small>个</small></div></div>
+        <div class="metric"><div class="k">最近检测</div><div class="v">11:43<small>今天</small></div></div>
+      </div>
+
+      <div class="section-head" style="margin-top:44px">
+        <h2>Systemd 用户单元</h2>
+        <span>状态来源：root-gnome-align.sh status</span>
+      </div>
+
+      <div class="layout">
+        <div>
+          <table class="units">
+            <thead><tr><th>单元</th><th>发行版条件</th><th>覆盖</th><th>Active</th><th>Enabled</th><th>作用</th></tr></thead>
+            <tbody>
+              <tr><td class="u">pipewire.service</td><td class="cond">ConditionUser=!root</td><td><span class="yes">● 是</span></td><td><span class="yes">active</span></td><td><span class="yes">enabled</span></td><td>媒体核心 <span class="d">/ 音频路由</span></td></tr>
+              <tr><td class="u">pipewire.socket</td><td class="cond">ConditionUser=!root</td><td><span class="yes">● 是</span></td><td><span class="yes">active</span></td><td><span class="yes">enabled</span></td><td>控制 <span class="d">/ 管理套接字</span></td></tr>
+              <tr><td class="u">pipewire-pulse.service</td><td class="cond">ConditionUser=!root</td><td><span class="yes">● 是</span></td><td><span class="yes">active</span></td><td><span class="yes">enabled</span></td><td>PulseAudio <span class="d">兼容层</span></td></tr>
+              <tr><td class="u">pipewire-pulse.socket</td><td class="cond">ConditionUser=!root</td><td><span class="yes">● 是</span></td><td><span class="yes">active</span></td><td><span class="yes">enabled</span></td><td>PulseAudio <span class="d">兼容套接字</span></td></tr>
+              <tr><td class="u">wireplumber.service</td><td class="cond none">无</td><td><span class="yes">● 是</span></td><td><span class="yes">active</span></td><td><span class="yes">enabled</span></td><td>设备枚举 <span class="d">/ 音量路由</span></td></tr>
+              <tr><td class="u">filter-chain.service</td><td class="cond none">无</td><td><span class="yes">● 是</span></td><td><span class="yes">active</span></td><td><span class="yes">enabled</span></td><td>PipeWire <span class="d">滤波器链</span></td></tr>
+              <tr><td class="u">mpris-proxy.service</td><td class="cond">ConditionUser=!@system</td><td><span class="yes">● 是</span></td><td><span class="yes">active</span></td><td><span class="yes">enabled</span></td><td>蓝牙 MPRIS <span class="d">媒体代理</span></td></tr>
+              <tr><td class="u">localsearch-3.service</td><td class="cond">!root / !gnome-initial-setup</td><td><span class="yes">● 是</span></td><td><span class="yes">active</span></td><td><span class="yes">enabled</span></td><td>Tracker <span class="d">/ 全局搜索索引</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div style="padding:22px 20px">
+          <h4>动作</h4>
+          <div class="actions">
+            <button class="btn">STATUS</button>
+            <button class="btn">DOCTOR</button>
+            <button class="btn solid">APPLY</button>
+            <button class="btn danger">REVERT</button>
+            <button class="btn ghost wide">RESTART SHELL · 需二次确认</button>
+          </div>
+
+          <h4>原理</h4>
+          <p class="desc">发行版单元把 root 排除在媒体栈之外。本扩展在每个单元旁写一份 <b>空赋值覆盖</b>，清空 ConditionUser 条件列表；systemd 的标准语义，apt 升级不会覆盖。</p>
+          <pre class="code" style="margin-top:14px"><i># ~/.config/systemd/user/&lt;unit&gt;.d/</i>
+<i>#   override.conf</i>
+[Unit]
+ConditionUser=</pre>
+
+          <h4 style="margin-top:26px">作用域</h4>
+          <dl class="kv" style="margin-top:0">
+            <dt>运行身份</dt><dd><b>root · uid 0</b></dd>
+            <dt>写入路径</dt><dd>/root/.config/systemd/user/*.d/override.conf</dd>
+            <dt>状态文件</dt><dd>/root/.config/root-gnome-align/state.json</dd>
+            <dt>普通用户</dt><dd>joe 会话 <b>完全不受影响</b></dd>
+            <dt>系统文件</dt><dd><b>0 处改动</b>（不写 /usr/lib）</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="section-head" style="margin-top:44px">
+        <h2>输出设备</h2>
+        <span>pactl list short sinks · 真实状态</span>
+      </div>
+      <div class="outputs">
+        <div><div class="id">SINK 59</div><div class="name">alsa_output.pci-0000_03_00.6.analog-stereo</div><div class="spec">PipeWire · s32le 2ch 48000Hz</div><div class="st">● SUSPENDED</div></div>
+        <div><div class="id">SINK 888</div><div class="name">alsa_output.pci-0000_03_00.1.hdmi-stereo</div><div class="spec">PipeWire · s32le 2ch 48000Hz</div><div class="st">● SUSPENDED</div></div>
+      </div>
+
+      <div class="foot">
+        <p>状态来自外部工具 stdout，不伪造绿灯；工具缺失显示失败原因。<b>RESTART SHELL</b> 会打断当前 GNOME 会话，默认关闭且二次确认；音量条不立即出现时也可注销重登。</p>
+        <span class="pill ok">已完全对齐 · 8 / 8</span>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

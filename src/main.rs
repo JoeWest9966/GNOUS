@@ -4,12 +4,15 @@ mod icons;
 mod pages;
 mod proc;
 mod registry;
+mod root_align;
 mod sys;
 mod table_state;
 mod theme;
 mod toggles;
 
 use std::time::{Duration, Instant};
+
+use root_align::Action as RootAlignAction;
 
 use ext::Provider as _;
 use gpui_kit::prelude::FluentBuilder as _;
@@ -55,6 +58,8 @@ pub(crate) struct App {
     fixes_checked: String,
     /// Batch "apply available fixes" needs a second click before mutating.
     fixes_apply_armed: bool,
+    /// State of the root-align diagnostic console.
+    root_align: root_align::State,
     /// UUID of the extension whose details are open in the right panel.
     selected: Option<String>,
     /// Last provider failure, shown inside the detail panel.
@@ -139,11 +144,20 @@ impl App {
                 .collect(),
             fixes_checked: sys::local_clock(),
             fixes_apply_armed: false,
+            root_align: root_align::State::new(),
             selected: None,
             error: None,
             nav: Nav::default(),
             last_click: None,
             drag_anchor: None,
+        }
+    }
+
+    /// Read the real `status` once when the diagnostic page is opened; the
+    /// user can always re-run it from the button if the system changed.
+    fn enter_root_align_page(&mut self, cx: &mut Context<Self>) {
+        if self.root_align.status.is_none() && !self.root_align.busy {
+            self.run_root_align_with_tab_switch(RootAlignAction::Status, false, cx);
         }
     }
 
@@ -158,6 +172,7 @@ impl App {
         self.selected = None;
         self.error = None;
         self.fixes_apply_armed = false;
+        self.root_align.armed = None;
         cx.notify();
     }
 
@@ -166,11 +181,15 @@ impl App {
         self.selected = None;
         self.error = None;
         self.fixes_apply_armed = false;
+        self.root_align.armed = None;
         if page.plugin == "processes" {
             self.proc = self.proc_sampler.sample();
             self.cpu_history.push(self.proc.cpu_total);
             let excess = self.cpu_history.len().saturating_sub(30);
             self.cpu_history.drain(0..excess);
+        }
+        if page.plugin == "root-align" {
+            self.enter_root_align_page(cx);
         }
         cx.notify();
     }
@@ -254,6 +273,64 @@ impl App {
         for id in pending {
             self.run_fix(id, fixes::Action::Apply, cx);
         }
+    }
+
+    /// Run one root-align action. Mutating actions need a second click; after
+    /// a successful apply/revert, `status` is re-run automatically.
+    pub(crate) fn run_root_align(&mut self, action: root_align::Action, cx: &mut Context<Self>) {
+        self.run_root_align_with_tab_switch(action, true, cx);
+    }
+
+    fn run_root_align_with_tab_switch(
+        &mut self,
+        action: root_align::Action,
+        switch_tab: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.root_align.busy {
+            return;
+        }
+        if action.is_mutating() && self.root_align.armed != Some(action) {
+            self.root_align.armed = Some(action);
+            cx.notify();
+            return;
+        }
+        self.root_align.armed = None;
+        self.root_align.busy = true;
+        let weak = cx.entity().downgrade();
+        let task = cx
+            .background_executor()
+            .spawn(async move { root_align::run(action) });
+        cx.spawn(async move |_, cx| {
+            let outcome = task.await;
+            let recheck = outcome.ok
+                && matches!(
+                    outcome.action,
+                    RootAlignAction::Apply | RootAlignAction::Revert
+                );
+            let _ = weak.update(cx, |app: &mut App, cx| {
+                app.root_align.absorb(outcome, switch_tab);
+                cx.notify();
+                // The automatic status probe refreshes state without stealing
+                // the visible APPLY LOG tab.
+                if recheck {
+                    app.run_root_align_with_tab_switch(RootAlignAction::Status, false, cx);
+                }
+            });
+            cx.refresh();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub(crate) fn select_root_tab(&mut self, tab: root_align::Tab, cx: &mut Context<Self>) {
+        self.root_align.tab = tab;
+        cx.notify();
+    }
+
+    pub(crate) fn select_root_domain(&mut self, domain: usize, cx: &mut Context<Self>) {
+        self.root_align.domain = domain;
+        cx.notify();
     }
 
     /// Two-step terminate. `force` selects SIGKILL instead of SIGTERM.
@@ -421,6 +498,7 @@ impl Render for App {
                             fixes: &self.fixes,
                             fixes_checked: &self.fixes_checked,
                             fixes_apply_armed: self.fixes_apply_armed,
+                            root_align: &self.root_align,
                         },
                         cx,
                     )),
@@ -818,6 +896,8 @@ pub(crate) struct Overview<'a> {
     pub(crate) fixes: &'a [fixes::FixState],
     pub(crate) fixes_checked: &'a str,
     pub(crate) fixes_apply_armed: bool,
+    /// Verbatim stdout and parsed state of the root-align console.
+    pub(crate) root_align: &'a root_align::State,
 }
 
 fn content(overview: &Overview, cx: &mut Context<App>) -> impl IntoElement {
@@ -829,6 +909,7 @@ fn content(overview: &Overview, cx: &mut Context<App>) -> impl IntoElement {
         ("core", "installed") => extensions_body(overview, &weak),
         ("processes", view) => pages::processes::body(view, overview, &weak),
         ("gnome-fixes", _) => pages::gnome_fixes::body(overview, &weak),
+        ("root-align", _) => pages::root_align::body(overview, &weak),
         (_, label) => placeholder(label),
     };
     // Table owns its own scrollbar below the header; every other page keeps

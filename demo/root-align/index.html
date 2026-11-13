@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GNOUS · 扩展页选型 · Root 桌面对齐</title>
+<style>
+  :root{--bg:#000;--line:rgba(255,255,255,.09);--line-strong:rgba(255,255,255,.18);--text:#F5F5F7;--muted:#86868B;--dim:#5A5A60;--accent:#E31937;--ok:#37D67A;--warn:#F5A623}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:"Helvetica Neue",Inter,"Segoe UI",system-ui,"Noto Sans SC",sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;padding:58px 48px 72px}
+  .wrap{max-width:1240px;margin:0 auto}
+  .kicker{font-size:11px;letter-spacing:.26em;text-transform:uppercase;color:var(--dim);margin-bottom:16px}
+  h1{font-size:40px;font-weight:200;letter-spacing:-.02em;line-height:1.1}
+  .top p{color:var(--muted);font-size:13px;line-height:1.75;margin-top:14px;max-width:830px}
+  .top p b{color:var(--text);font-weight:400}
+  .hint{font-size:11.5px;color:var(--dim);margin-top:12px}
+  .hint b{color:var(--text);font-weight:400}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);margin-top:44px}
+  a.card{background:var(--bg);text-decoration:none;color:inherit;display:flex;flex-direction:column;transition:background .18s}
+  a.card:hover{background:#0A0A0B}
+  .thumb{height:200px;border-bottom:1px solid var(--line);padding:20px;position:relative;overflow:hidden}
+  .tag{font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);border:1px solid var(--line);padding:4px 8px;display:inline-block}
+  /* A 单元矩阵 */
+  .tA .grid8{position:absolute;inset:58px 20px 20px;display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(2,1fr);gap:1px;background:var(--line)}
+  .tA .grid8 div{background:var(--bg);padding:9px;display:flex;flex-direction:column;justify-content:space-between}
+  .tA .grid8 i{display:block;height:3px;width:70%;background:rgba(255,255,255,.16)}
+  .tA .grid8 b{display:block;width:6px;height:6px;border-radius:50%;background:var(--ok)}
+  .tA .grid8 div:nth-child(7) b{background:var(--accent)}
+  /* B 巨型开关 */
+  .tB .band{position:absolute;inset:58px 20px 20px;border:1px solid var(--line);display:flex;flex-direction:column;justify-content:center;padding:0 18px;gap:16px}
+  .tB .band .state{font-size:42px;font-weight:200;letter-spacing:-.03em;color:var(--ok);line-height:1}
+  .tB .band .sw{height:28px;width:74px;border:1px solid var(--line-strong);position:relative;display:block}
+  .tB .band .sw::after{content:"";position:absolute;top:3px;right:3px;width:20px;height:20px;background:var(--ok)}
+  .tB .band .steps{display:flex;gap:6px}
+  .tB .band .steps i{display:block;height:3px;flex:1;background:rgba(255,255,255,.14)}
+  .tB .band .steps i:first-child{background:var(--accent)}
+  /* C 主/从 + 日志 */
+  .tC .split{position:absolute;inset:58px 20px 20px;display:grid;grid-template-columns:40% 1fr;gap:1px;background:var(--line)}
+  .tC .split>div{background:var(--bg);padding:9px;display:flex;flex-direction:column;gap:7px}
+  .tC .split .l i{display:block;height:3px;background:rgba(255,255,255,.12)}
+  .tC .split .l i:first-child{background:var(--accent);width:24%}
+  .tC .split .r{border-left:0}
+  .tC .split .r i{display:block;height:3px;background:rgba(255,255,255,.12)}
+  .tC .split .r i:first-child{width:50%}
+  .tC .split .r .box{flex:1;border:1px solid var(--line);margin-top:3px}
+  .meta{padding:20px 22px 24px}
+  .meta .hd{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+  .meta h2{font-size:16.5px;font-weight:500;letter-spacing:-.01em}
+  .meta .en{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
+  .meta p{font-size:12.5px;color:var(--muted);line-height:1.7;margin-top:10px}
+  .tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:14px}
+  .tags span{font-size:10px;letter-spacing:.06em;color:var(--dim);border:1px solid var(--line);padding:4px 9px}
+  .open{margin-top:16px;display:flex;align-items:center;gap:7px;font-size:11px;letter-spacing:.12em;text-transform:uppercase}
+  .open::after{content:"→";transition:transform .2s}
+  a.card:hover .open::after{transform:translateX(4px)}
+  footer{margin-top:54px;border-top:1px solid var(--line);padding-top:20px;display:flex;justify-content:space-between;font-size:11.5px;color:var(--dim);flex-wrap:wrap;gap:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="kicker">GNOUS · root-gnome-align 扩展页</div>
+    <h1>同一个扩展，三种呈现方式。</h1>
+    <p>内容来自 <b>/home/root/GNOME/Root用户桌面功能对齐</b> 的真实命令：`status` 读 8 个 systemd 用户单元，`doctor` 读发行版条件与日志，`apply / revert / restart-shell` 是可执行动作。三种方案共用 Control Deck 语言，区别只在信息组织方式。</p>
+    <div class="hint">建议全屏 · <b>A</b> 单元矩阵最完整 · <b>B</b> 操作路径最短 · <b>C</b> 日志/诊断能力最强</div>
+  </div>
+
+  <div class="grid">
+    <a class="card" href="a.html">
+      <div class="thumb tA">
+        <div class="tag">A · 单元矩阵</div>
+        <div class="grid8">
+          <div><i></i><b></b></div><div><i></i><b></b></div><div><i></i><b></b></div><div><i></i><b></b></div>
+          <div><i></i><b></b></div><div><i></i><b></b></div><div><i></i><b></b></div><div><i></i><b></b></div>
+        </div>
+      </div>
+      <div class="meta">
+        <div class="hd"><h2>单元矩阵</h2><span class="en">Unit Matrix</span></div>
+        <p>顶部四个大数字，下面 8 行单元表（active / enabled / 覆盖 / 原始 ConditionUser），右侧常驻动作与原理。排障时能一眼定位单个单元。</p>
+        <div class="tags"><span>8 单元逐行</span><span>条件溯源</span><span>动作侧栏</span></div>
+        <div class="open">打开预览</div>
+      </div>
+    </a>
+
+    <a class="card" href="b.html">
+      <div class="thumb tB">
+        <div class="tag">B · 开关优先</div>
+        <div class="band">
+          <div class="state">ALIGNED</div>
+          <span class="sw"></span>
+          <div class="steps"><i></i><i></i><i></i><i></i></div>
+        </div>
+      </div>
+      <div class="meta">
+        <div class="hd"><h2>开关优先</h2><span class="en">Toggle</span></div>
+        <p>巨型状态字 + 一个大开关，8 个单元压成胶囊，下面是 apply 的四步流程与「重启 Shell」独立危险区。日常最省事。</p>
+        <div class="tags"><span>大开关</span><span>四步流程</span><span>危险操作分离</span></div>
+        <div class="open">打开预览</div>
+      </div>
+    </a>
+
+    <a class="card" href="c.html">
+      <div class="thumb tC">
+        <div class="tag">C · 诊断台</div>
+        <div class="split">
+          <div class="l"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="r"><i></i><i></i><div class="box"></div></div>
+        </div>
+      </div>
+      <div class="meta">
+        <div class="hd"><h2>诊断台</h2><span class="en">Doctor Console</span></div>
+        <p>左侧功能域分组（音频 / 媒体控制 / 搜索 / 输出设备），右侧原样 `status` 与 `doctor` stdout，底部命令与 state.json 路径。最接近真实工具。</p>
+        <div class="tags"><span>stdout 原样</span><span>功能域分组</span><span>只读 doctor</span></div>
+        <div class="open">打开预览</div>
+      </div>
+    </a>
+  </div>
+
+  <footer>
+    <span>GNOUS · root-gnome-align 扩展页选型 · 纯静态 HTML</span>
+    <span>3 个方案 · 0 依赖 · 数据取自本机真实 status/doctor</span>
+  </footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,16 @@
+id = "root-align"
+name = "Root 桌面对齐"
+summary = "root 会话媒体栈 / 全局搜索诊断台，原样展示外部 status、doctor 与动作输出"
+version = "0.1.0"
+capabilities = ["page"]
+icon = "audio-lines"
+
+# 页面级扩展：挂在「扩展」分区，在 Fixes 之后出现
+[nav]
+label = "Align"
+section = "extensions"
+order = 30
+
+[[views]]
+id = "align"
+label = "Align"

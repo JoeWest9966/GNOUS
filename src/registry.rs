@@ -65,6 +65,10 @@ const MANIFESTS: &[(&str, &str)] = &[
         "extensions/gnome-fixes/manifest.toml",
         include_str!("../extensions/gnome-fixes/manifest.toml"),
     ),
+    (
+        "extensions/root-align/manifest.toml",
+        include_str!("../extensions/root-align/manifest.toml"),
+    ),
 ];
 
 static CACHE: OnceLock<Vec<Manifest>> = OnceLock::new();
@@ -124,6 +128,16 @@ mod tests {
             Some("extensions")
         );
         assert_eq!(fixes.views.len(), 1);
+        let align = all
+            .iter()
+            .find(|m| m.id == "root-align")
+            .expect("root-align");
+        assert_eq!(
+            align.nav.as_ref().map(|n| n.section.as_str()),
+            Some("extensions")
+        );
+        assert_eq!(align.views.len(), 1);
+        assert_eq!(align.views[0].id, "align");
     }
 
     #[test]
@@ -132,7 +146,8 @@ mod tests {
         assert_eq!(overview.len(), 5);
         assert!(views_for("appearance").is_empty());
         let extensions = views_for("extensions");
-        assert_eq!(extensions.len(), 1);
+        assert_eq!(extensions.len(), 2);
         assert_eq!(extensions[0].1.id, "fixes");
+        assert_eq!(extensions[1].1.id, "align");
     }
 }

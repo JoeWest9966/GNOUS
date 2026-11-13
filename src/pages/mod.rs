@@ -6,3 +6,4 @@
 
 pub mod gnome_fixes;
 pub mod processes;
+pub mod root_align;

@@ -91,9 +91,11 @@ default = true
 | --- | --- | --- |
 | `processes` | 页面级 | Overview 分区下的 5 个视图：Table / Live / Memory / Tree / Groups |
 | `gnome-fixes` | 页面级 | Extensions 分区下的 Fixes：把 `/home/root/GNOME/` 的 5 个小补丁收成一处，统一「体检 / 应用 / 回退」，状态来自外部工具的真实输出 |
+| `root-align` | 页面级 | Extensions 分区下的 Align：C 方案诊断台，8 个 systemd 用户单元按功能域分组，`status` / `doctor` / 动作 stdout 原样展示；复用 `GNOUS_FIXES_ROOT` |
 
 `GNOUS_FIXES_ROOT` 可覆盖工具根目录（默认 `/home/root/GNOME`）；工具缺失时显示失败原因，不伪造状态。
 带副作用的外部命令一律二次确认，危险 flags（`--now` / `--restart` / `--run --yes`）不从 UI 触发。
+`root-align` 的 `restart-shell` 会打断 GNOME 会话，放在独立危险区且二次确认；`apply / revert` 成功后自动重跑只读 `status`，并把动作 stdout 留在 `APPLY LOG`。
 
 新增页面级扩展的完整链路：`extensions/<id>/manifest.toml` → `MANIFESTS` 登记 →
 `src/pages/<id>.rs` 实现 `body()` → `src/pages/mod.rs` 导出。
