@@ -41,6 +41,14 @@
   键盘：`Ctrl+1/2/3` 切范围、`Ctrl+Space` 暂停刷新、`Ctrl+F` 排序冻结、
   `Ctrl+K` / `Ctrl+Shift+K` 结束/强杀、`Ctrl+P` / `Ctrl+Shift+P` 暂停/继续进程、
   `Ctrl+C` / `Ctrl+Shift+C` 复制行/命令行、`Esc` 清空；普通字符始终进入搜索。
+- Table 页 P2（Table 封版）：状态过滤、只看热点（CPU 阈值或常驻内存 ≥ 512 MB）、
+  关注置顶与「只看关注」（按进程名 + 用户 + uid 持久化，避免 PID 复用）、完整键盘操作
+  （`↑/↓/PgUp/PgDn/Home/End` 选行并滚动跟随、`Enter` 结束、`Delete` 强杀）、
+  0.5s / 1s / 2s / 5s 刷新频率、两帧真实采样差分驱动的变化高亮、三种行密度、
+  本地操作日志（信号/关注/刷新/暂停，最多 200 条，可复制 TSV）。
+  新增 `Ctrl+T` 状态、`Ctrl+H` 热点、`Ctrl+W` 关注、`Ctrl+R` 刷新、`Ctrl+G` 密度、
+  `Ctrl+L` 日志；偏好与日志写入 `~/.config/gnous/table.json`（临时文件 + rename 原子写）。
+  Table 的选中、搜索、滚动位置不持久化，信号执行仍一律经过确认对话框。
 - 新增页面级扩展 `startup-layouts`（左列独立分区 Startup）：勾选开机要铺开的桌面页面、给每页
   按比例排列窗口、配置启动时机与失败策略；配置自动写入 `~/.config/gnous/startup.json`。
   「预演一遍」真实解析每个启动命令在 `PATH` 里是否存在；执行器未接入前，「上次启动」与
@@ -89,7 +97,8 @@ src/
 ├── ext.rs     # 扩展清单：Provider 抽象 + 文件/gsettings 默认后端
 ├── registry.rs # 编译期插件注册表：解析 extensions/*/manifest.toml，生成顶栏页面
 ├── proc.rs    # 进程采样：/proc/<pid>/stat + status，CPU 差分、用户名、cgroup
-├── table_state.rs # Table 视图的排序 / 搜索 / 范围 / 暂停 / 冻结状态
+├── table_state.rs # Table 视图的筛选 / 排序 / 置顶 / 变化检测 / 行密度 / 刷新频率
+├── table_prefs.rs # Table 偏好与操作日志的本地持久化（~/.config/gnous/table.json）
 ├── scroll.rs  # LED 滚动指示器状态（刻度、拖动、键盘跳转）
 ├── fixes.rs   # gnome-fixes 的外部命令解析与体检状态
 ├── root_align.rs # root-align 的外部命令、单元解析与危险动作约定
