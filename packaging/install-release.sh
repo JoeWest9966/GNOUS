@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the v0.2.0-preview.2 GNOUS build into /usr/local.
+# Install the v0.2.0-preview.3 GNOUS build into /usr/local.
 # Idempotent: backups are refreshed only when the target file actually changed.
 set -euo pipefail
 
@@ -12,7 +12,7 @@ backup=/usr/local/share/gnous/release-backups
 version=$("$src" --version)
 
 [[ "$(id -u)" == 0 ]] || { echo "请以 root 运行"; exit 1; }
-[[ "$version" == "gnous 0.2.0-preview.2" ]] || {
+[[ "$version" == "gnous 0.2.0-preview.3" ]] || {
     echo "版本不匹配: $version"; exit 1;
 }
 

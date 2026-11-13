@@ -56,7 +56,7 @@
   危险动作二次确认，`restart-shell` 不进入批量流程。
 - 顶栏同时是客户端标题栏：拖动、双击最大化、右键原生窗口菜单，四边四角提供隐形缩放热区。
 
-当前版本：`0.2.0-preview.2`。Appearance / Devices / Power 分区与启动器仍是静态占位；
+当前版本：`0.2.0-preview.3`。Appearance / Devices / Power 分区与启动器仍是静态占位；
 外部工具默认在 `/home/root/GNOME`，可用 `GNOUS_FIXES_ROOT` 覆盖。发布记录见 `CHANGELOG.md`。
 
 ![GNOUS 渲染](docs/gnous.png)

@@ -5,6 +5,36 @@
 - `0.x.y-preview.N`：开发预览版。可在本机安装、验证，但仍有占位页与未完成能力。
 - `0.x.y`：功能稳定后的正式小版本。
 
+## [0.2.0-preview.3] - 2026-11-13
+
+新增 `openshell` 页面级扩展，把 OpenShell CLI 收成一块工作面。
+
+### OpenShell 面板（页面级扩展 `openshell`）
+
+- Extensions 分区新增 8 个视图 / 45 个区块：
+  **Gateway**（网关状态、切换、认证身份、运行时、环境体检、指标条）、
+  **Sandboxes**（总览表、创建向导、电源控制、详情、模板库、工作区、回收站）、
+  **Inside**（exec 命令台、文件推拉、SSH 片段、编辑器直通、终端接入）、
+  **Network**（端口转发、服务隧道、服务暴露、端点清单）、
+  **Policy**（总览、增量编辑、dry-run 差异、历史、全局旋钮）、
+  **Credentials**（provider、创建、附加矩阵、profile、导入校验、轮换、健康）、
+  **Observe**（日志流、日志检索、设置、动作时间线、原始输出）、
+  **Tooling**（命令生成器、批量预览、TUI 直通、补全、机队矩阵、危险动作审计）。
+- 每个区块标注它对应的真实命令；进入视图时后台跑一次只读探测，之后可手动 `REFRESH`。
+- 失败原样展示 stdout / stderr，不把失败画成绿灯；CLI 不上报的字段（网关 CPU / 内存、
+  凭据到期日）就不画，不补假仪表。
+- 写操作分两级：普通写动作二次确认（同一按钮点两次），删除 / 解绑 / 停转发标 `DANGER`；
+  `policy update` 只走 `--dry-run`；交互式命令（`connect` / `login` / `--editor` / `term`）
+  只给可复制的命令行，不在面板里代跑。
+- 首版限制：GPUI 输入框未接入，创建沙箱的参数从真实数据或固定只读预设里选；
+  批量动作只给命令预览，不执行。
+
+### 工程
+
+- `docs/EXTENSIONS.md` 现状表补 `openshell` 行；扩展自带 `extensions/openshell/README.md`。
+- 选型演示保留在 `demo/openshell-panel/`。
+- `cargo build` 零警告、`cargo test` 30 项通过、`cargo fmt --check` 干净。
+
 ## [0.2.0-preview.2] - 2026-11-13
 
 新增左列独立分区的开机布局扩展，并把发布基建并入 `main`。
