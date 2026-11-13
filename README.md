@@ -32,11 +32,19 @@
 
 - 进程页已按 `docs/EXTENSIONS.md` 做成第一个页面级扩展：`extensions/processes/manifest.toml`
   声明 5 个视图（Table / Live / Memory / Tree / Groups），顶栏 tab 由 registry 生成，五种视图共用
-  同一份 `/proc` 采样，支持点击选中与两步确认结束进程。
+  同一份 `/proc` 采样，支持点击选中与进程操作确认。
 - Table 页 P0：表头排序、直接输入搜索（名称 / PID / 用户）、全部/我的/系统范围过滤、
-  暂停刷新、排序冻结、选中行详情栏（含长命令行）、SIGTERM 与 SIGKILL 两步确认、
-  表头吸顶（表体独立滚动）；键盘 `1/2/3` 切范围、空格暂停、`F` 冻结、`k` 结束、
-  `K` 强杀、`Esc` 清空。
+  暂停刷新、排序冻结、选中行详情栏（含长命令行）、表头吸顶（表体独立滚动）。
+- Table 页 P1：右键菜单收拢进程操作；SIGTERM / SIGKILL / SIGSTOP / SIGCONT 都必须经过
+  确认对话框（显示进程名、PID、完整命令行和信号后果，`Enter` 确认、`Esc` 取消）；
+  复制整行 TSV 或命令行到剪贴板与 X11 primary selection，操作结果显示短时 toast。
+  键盘：`Ctrl+1/2/3` 切范围、`Ctrl+Space` 暂停刷新、`Ctrl+F` 排序冻结、
+  `Ctrl+K` / `Ctrl+Shift+K` 结束/强杀、`Ctrl+P` / `Ctrl+Shift+P` 暂停/继续进程、
+  `Ctrl+C` / `Ctrl+Shift+C` 复制行/命令行、`Esc` 清空；普通字符始终进入搜索。
+- 滚动指示器选了 `demo/scroll-indicators` 里的 **10 · LED 刻度**：右侧 26 根 2px 刻度，
+  滚过的变暗红、当前位置那根拉长成亮红。整列既是指示器也是把手 —— 点哪跳哪、按住可连续拖；
+  再加键盘 `↑` `↓` `PgUp` `PgDn` `Home` `End`，所以滚轮坏了也能走完整个页面。
+  两个滚动区（页面外层 / 进程表体）各自独立跟踪一份 scroll handle。
 
 其余区块（启动器）仍是静态占位。
 
