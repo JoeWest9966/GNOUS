@@ -67,6 +67,14 @@ cargo run --release              # 本机发布版
 ```
 
 本机安装入口为 `/usr/local/bin/gnous`，桌面入口为 `/usr/local/share/applications/gnous.desktop`。
+从已构建的 release 产物安装或回滚到本机最新包：
+
+```bash
+sudo ./packaging/install-release.sh ./target/release/gnous
+```
+
+脚本会校验版本、备份被替换的旧文件、安装 `/usr/local/bin/gnous` 与 desktop/icon，
+并刷新 desktop/icon 缓存；备份保存在 `/usr/local/share/gnous/release-backups/`。
 
 ## 源码结构
 

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=GNOUS
+GenericName=GNOME 控制面板
+Comment=本机 GNOME 管理面板
+Exec=gnous
+Icon=gnous
+Terminal=false
+Categories=Settings;System;
+Keywords=gnome;settings;system;gnous;
+StartupNotify=true

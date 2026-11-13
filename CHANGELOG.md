@@ -46,6 +46,8 @@
 - 所有 HTML 选型 demo 按 `demo/<demo名>/` 分目录保存；本版新增 `root-align` 三方案选型 demo。
 - `cargo build` 零警告、`cargo test` 22 项通过、`cargo fmt --check` 干净。
 - 新增 `gnous --version` / `gnous -V`，版本值来自 `Cargo.toml` 的 `CARGO_PKG_VERSION`。
+- 新增 `packaging/install-release.sh`、`packaging/gnous.desktop`、`packaging/gnous.svg`：
+  校验版本、备份旧文件并原子替换本机 `/usr/local` 安装，桌面入口不再依赖手工复制。
 
 ### 已知范围
 
