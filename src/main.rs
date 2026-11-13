@@ -2363,7 +2363,20 @@ fn caps_no_color(raw: &str, size: f32, weight: FontWeight, em: f32) -> Div {
 
 // ============================================================================
 
+/// `CARGO_PKG_VERSION` is the single source of truth for `--version`; no
+/// release tag or manifest needs to be duplicated in the UI.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "--version" || arg == "-V") {
+        println!("gnous {VERSION}");
+        return;
+    }
+    if let Some(arg) = args.iter().find(|arg| arg.starts_with('-')) {
+        eprintln!("gnous {VERSION}\n未知参数: {arg}\n用法: gnous [--version]");
+        std::process::exit(2);
+    }
     let bounds = Bounds {
         origin: point(px(120.), px(80.)),
         size: size(px(1440.), px(1000.)),
