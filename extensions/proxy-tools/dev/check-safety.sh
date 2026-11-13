@@ -62,6 +62,9 @@ for f in $files; do
         file_added=$(sed 's/^/+/' "$f")
     fi
     [[ -z "$file_added" ]] && continue
+    # 行内标记 `safety-allow` 才放行（例如常量定义、打印给操作员的文本）
+    file_added=$(printf '%s\n' "$file_added" | grep -v 'safety-allow' || true)
+    [[ -z "$file_added" ]] && continue
     for p in "${patterns[@]}"; do
         if printf '%s\n' "$file_added" | grep -Eq -- "$p"; then
             echo "✗ 红线命中：$f  ←  $p"

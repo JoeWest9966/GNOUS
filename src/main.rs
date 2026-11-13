@@ -5,6 +5,7 @@ mod icons;
 mod openshell;
 mod pages;
 mod proc;
+pub mod proxy_tools;
 mod registry;
 mod root_align;
 mod scroll;
@@ -2879,6 +2880,12 @@ fn main() {
         let hold_ms = args.get(2).and_then(|raw| raw.parse().ok()).unwrap_or(6000);
         fixes_backend::clipfix::holder(token, hold_ms);
         return;
+    }
+    if args
+        .first()
+        .is_some_and(|arg| arg == "--builtin-proxy-relay")
+    {
+        std::process::exit(proxy_tools::relay_cli(&args[1..]));
     }
     if args.iter().any(|arg| arg == "--version" || arg == "-V") {
         println!("gnous {VERSION}");
