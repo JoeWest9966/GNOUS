@@ -49,6 +49,25 @@
   新增 `Ctrl+T` 状态、`Ctrl+H` 热点、`Ctrl+W` 关注、`Ctrl+R` 刷新、`Ctrl+G` 密度、
   `Ctrl+L` 日志；偏好与日志写入 `~/.config/gnous/table.json`（临时文件 + rename 原子写）。
   Table 的选中、搜索、滚动位置不持久化，信号执行仍一律经过确认对话框。
+- CPU 页（原 Live）：`/proc/stat` 聚合行差分出总占用，`cpu0..N` 差分出每核占用；
+  右侧每核横条 + 各自小曲线，`ctxt` / `intr` 差分成每秒速率，`procs_running` 直读。
+  总历史 120 帧，15/30/60 秒窗口按钮的标签按当前刷新率实时换算成真实时长，
+  历史不足时标「采集中 n/窗口」而不画一条假线。TOP 进程每行带自己的 30 帧曲线，
+  点一行就跳到 Table 并选中该行。
+- Memory 页（内存地图）：方块面积 = 常驻内存，用的是全量按 RSS 排序的前 40 个进程
+  （不是 CPU 前 40），其余折成「其余进程」并标明量。
+  - 顶部内存条用与 `free` 一致的三分解：已用（`MemTotal - MemAvailable`）/ 可回收缓存
+    （`MemAvailable - MemFree`）/ 空闲，三段**按定义精确闭合**。
+    下面的「已用构成」是应用匿名 / 共享内存 / 内核 Slab / 内核栈 + 页表 / Swap 驻留 /
+    **GPU 显存**（`amdgpu` 的 `mem_info_gtt_used` + `mem_info_vram_used`，核显吃系统内存
+    且 `meminfo` 不报，这是最容易丢一大块的地方）/ 内核未细分——按真机实测，缺的那 2.5 GB
+    正是核显占的。
+  - 选中进程读 `/proc/<pid>/smaps_rollup` 得到 **PSS / USS / 共享页 / Swap PSS**（只对
+    选中的那一个进程读，不做全量扫描），另带 status 里的 RssAnon / RssFile / RssShmem /
+    VmSwap / VmPeak；按钮一键「在 Table 中打开」。
+  - 搜索（名称 / PID）+ 全部/我的/系统范围 + 「合并同类」（同名多进程合成一块，
+    Electron 类最有用）；方块用 squarified treemap，靠 `container_query` 拿真实布局尺寸，
+    窗口多大就铺多大。两帧真实差分驱动 RSS 增长标记（≥ 50 MB 标 `↑`，4 秒后自动消失）。
 - 新增页面级扩展 `startup-layouts`（左列独立分区 Startup）：勾选开机要铺开的桌面页面、给每页
   按比例排列窗口、配置启动时机与失败策略；配置自动写入 `~/.config/gnous/startup.json`。
   「预演一遍」真实解析每个启动命令在 `PATH` 里是否存在；执行器未接入前，「上次启动」与
@@ -104,9 +123,11 @@ sudo ./packaging/install-release.sh ./target/release/gnous
 src/
 ├── main.rs    # 窗口、图标栏、顶栏、概览各区块的布局
 ├── sys.rs     # 只读系统采样（procfs / sysfs + statvfs），输出一帧 Snapshot
+│              #   + 每核 CPU / ctxt-intr 速率 / 内存三分解 + GPU 显存
 ├── ext.rs     # 扩展清单：Provider 抽象 + 文件/gsettings 默认后端
 ├── registry.rs # 编译期插件注册表：解析 extensions/*/manifest.toml，生成顶栏页面
-├── proc.rs    # 进程采样：/proc/<pid>/stat + status，CPU 差分、用户名、cgroup
+├── proc.rs    # 进程采样：/proc/<pid>/stat + status，CPU 差分、用户名、cgroup、
+│              #   RSS 细分与按需 smaps_rollup（PSS/USS）
 ├── table_state.rs # Table 视图的筛选 / 排序 / 置顶 / 变化检测 / 行密度 / 刷新频率
 ├── table_prefs.rs # Table 偏好与操作日志的本地持久化（~/.config/gnous/table.json）
 ├── scroll.rs  # LED 滚动指示器状态（刻度、拖动、键盘跳转）
