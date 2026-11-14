@@ -84,6 +84,13 @@ pub struct Process {
     pub swap_kb: u64,
     /// `VmPeak`: the high-water mark of virtual size.
     pub vm_peak_kb: u64,
+    /// Full cgroup v2 path, e.g. `/user.slice/user-1000.slice/user@1000.service`.
+    /// Sampled once per process lifetime; empty when the kernel does not expose
+    /// it, in which case the grouped view says so instead of guessing.
+    pub cgroup: String,
+    /// `PF_KTHREAD`: a kernel thread. Their `comm` has no wrapper (`kworker/0:1`,
+    /// not `[kworker/0:1]`), so the flag is the only reliable test.
+    pub kernel: bool,
     /// Recent CPU samples, newest last (only kept for the busiest processes).
     pub history: Vec<u8>,
 }
@@ -178,6 +185,11 @@ pub struct Sampler {
     clock_ticks: f64,
     users: HashMap<u32, String>,
     history: HashMap<u32, Vec<u8>>,
+    /// `(pid, starttime) -> cgroup path`. A process cannot change its cgroup
+    /// path without also changing pid or starttime, so one read per process
+    /// lifetime is enough. Reading it during render was several hundred file
+    /// reads per frame on a busy machine.
+    cgroups: HashMap<(u32, u64), String>,
     first: bool,
 }
 
@@ -201,6 +213,7 @@ impl Sampler {
             },
             users: HashMap::new(),
             history: HashMap::new(),
+            cgroups: HashMap::new(),
             first: true,
         }
     }
@@ -227,7 +240,9 @@ impl Sampler {
                 else {
                     continue;
                 };
-                let Some(mut process) = read_process(pid, &mut self.users, self.clock_ticks) else {
+                let Some(mut process) =
+                    read_process(pid, &mut self.users, self.clock_ticks, &mut self.cgroups)
+                else {
                     continue;
                 };
                 let ticks = process.ticks;
@@ -250,6 +265,11 @@ impl Sampler {
         self.prev_ticks = next_ticks;
         self.prev_total = total;
         self.first = false;
+        // Drop cache entries for processes that died, otherwise a long-running
+        // session leaks one small string per started process.
+        let live: std::collections::HashSet<u32> =
+            processes.iter().map(|process| process.pid).collect();
+        self.cgroups.retain(|(pid, _), _| live.contains(pid));
 
         processes.sort_by(|a, b| {
             b.cpu
@@ -303,7 +323,12 @@ struct Raw {
     ticks: u64,
 }
 
-fn read_process(pid: u32, users: &mut HashMap<u32, String>, clock_ticks: f64) -> Option<Raw> {
+fn read_process(
+    pid: u32,
+    users: &mut HashMap<u32, String>,
+    clock_ticks: f64,
+    cgroups: &mut HashMap<(u32, u64), String>,
+) -> Option<Raw> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let open = stat.find('(')?;
     let close = stat.rfind(')')?;
@@ -316,6 +341,9 @@ fn read_process(pid: u32, users: &mut HashMap<u32, String>, clock_ticks: f64) ->
     let stime: u64 = fields.get(12)?.parse().ok()?;
     let threads: u32 = fields.get(17)?.parse().ok()?;
     let starttime: u64 = fields.get(19)?.parse().ok()?;
+    // Field 9 of /proc/pid/stat; PF_KTHREAD is 0x00200000.
+    let flags: u64 = fields.get(6)?.parse().unwrap_or(0);
+    let kernel = flags & 0x0020_0000 != 0;
 
     let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
     let mut uid = 0u32;
@@ -345,6 +373,14 @@ fn read_process(pid: u32, users: &mut HashMap<u32, String>, clock_ticks: f64) ->
 
     let age_secs = starttime / clock_ticks.max(1.) as u64;
     let user = user_name(uid, users);
+    let cgroup = match cgroups.get(&(pid, starttime)) {
+        Some(cached) => cached.clone(),
+        None => {
+            let path = cgroup_path(pid);
+            cgroups.insert((pid, starttime), path.clone());
+            path
+        }
+    };
     Some(Raw {
         process: Process {
             pid,
@@ -362,6 +398,8 @@ fn read_process(pid: u32, users: &mut HashMap<u32, String>, clock_ticks: f64) ->
             rss_shmem_kb,
             swap_kb,
             vm_peak_kb,
+            cgroup,
+            kernel,
             history: Vec::new(),
         },
         ticks: utime + stime,
@@ -377,17 +415,51 @@ pub fn command(pid: u32) -> String {
     cmd.trim_end().to_string()
 }
 
-/// cgroup slices for a pid, used by the grouped view.
-pub fn cgroups(pid: u32) -> Vec<String> {
-    std::fs::read_to_string(format!("/proc/{pid}/cgroup"))
-        .map(|raw| {
-            raw.lines()
-                .filter_map(|line| line.rsplit(':').next())
-                .map(|path| path.trim().trim_start_matches('/').to_string())
-                .filter(|path| !path.is_empty())
-                .collect()
-        })
-        .unwrap_or_default()
+/// The cgroup v2 path of a pid, e.g. `/user.slice/user-1000.slice`.
+///
+/// Falls back to the first non-empty v1 controller line so a v1 box still
+/// groups by something real. Returns an empty string when nothing is readable
+/// (restricted container, no cgroup mounted).
+fn cgroup_path(pid: u32) -> String {
+    let Ok(raw) = std::fs::read_to_string(format!("/proc/{pid}/cgroup")) else {
+        return String::new();
+    };
+    let mut best = String::new();
+    for line in raw.lines() {
+        let Some((_, path)) = line.split_once("::") else {
+            continue;
+        };
+        let path = path.trim();
+        if !path.is_empty() {
+            return path.to_string(); // v2 unified hierarchy
+        }
+    }
+    for line in raw.lines() {
+        let Some(path) = line.rsplit(':').next() else {
+            continue;
+        };
+        let path = path.trim();
+        if path.is_empty() || path == "/" {
+            continue;
+        }
+        if best.is_empty() {
+            best = path.to_string();
+        }
+    }
+    best
+}
+
+/// Splits a cgroup path into its components, outermost first.
+///
+/// `/user.slice/user-1000.slice/user@1000.service/app.slice/app-gnome-x-9.scope`
+/// becomes `["user.slice", "user-1000.slice", "user@1000.service", "app.slice",
+/// "app-gnome-x-9.scope"]`. Only the paths systemd itself writes are treated as
+/// structural; anything else is still returned verbatim so it can be shown.
+pub fn cgroup_components(path: &str) -> Vec<String> {
+    path.split('/')
+        .filter(|part| !part.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 pub fn signal(pid: u32, sig: i32) -> Result<(), String> {
