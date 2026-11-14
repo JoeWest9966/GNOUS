@@ -32,7 +32,7 @@
 
 - 进程页已按 `docs/EXTENSIONS.md` 做成第一个页面级扩展：`extensions/processes/manifest.toml`
   声明 5 个视图（Table / CPU / Memory / Tree / Groups），顶栏 tab 由 registry 生成，五种视图共用
-  同一份 `/proc` 采样，支持点击选中与进程操作确认。
+  同一份 `/proc` 采样，支持点击选中与进程操作确认。五个视图现在都是真实数据。
 - Table 页 P0：表头排序、直接输入搜索（名称 / PID / 用户）、全部/我的/系统范围过滤、
   暂停刷新、排序冻结、选中行详情栏（含长命令行）、表头吸顶（表体独立滚动）。
 - Table 页 P1：右键菜单收拢进程操作；SIGTERM / SIGKILL / SIGSTOP / SIGCONT 都必须经过
@@ -91,6 +91,29 @@
   另外 3 项仍走外部工具，输出不明时显示失败原因而不伪造状态；危险动作二次确认，
   `restart-shell` 不进入批量流程。
 - 顶栏同时是客户端标题栏：拖动、双击最大化、右键原生窗口菜单，四边四角提供隐形缩放热区。
+- Tree 页（进程树）：父子关系来自 `/proc/<pid>/stat` 的 `ppid`，从 PID 1 出发真实 DFS，
+  父进程已消失的进程不会被丢掉，而是提升成自己的根（pid 复用造成 a↔b 互为父子的环也有
+  专门处理，不会重复输出或挂死）。
+  - 内核线程按 `stat` 里的 `PF_KTHREAD` 标志位（0x00200000）识别——它们的 `comm` 不带
+    `[`，靠名字判断是错的；识别出来的只报数量、不占行。
+  - 每行显示**子树合计**（CPU 与内存），所以 `firefox` 一行就是它下面所有子进程的总和，
+    合计用一次后序 DFS 算出并缓存，不是每行重算。
+  - 默认展开两层，`▾/▸` 逐节点折叠，另有「全部展开 / 回到两层」；折叠状态按 pid 记住，
+    刷新不会自己弹开。
+  - 搜索会把命中项及其所有祖先自动展开到可见；行数上限 600，超出的节点数会明确写出来，
+    不静默截断。
+- Groups 页（进程分组）：分组来自 `/proc/<pid>/cgroup`，按 systemd 的真实层级
+  （`user.slice` → `user-1000.slice` → `user@1000.service` → `app.slice` → `xxx.scope`）
+  建树聚合，不是靠字符串包含猜。
+  - 这条修掉了一个真实的性能 bug：原来在渲染循环里对每个进程读一次 cgroup 文件，1 秒刷新
+    就是每秒几百次文件 IO。现在采样阶段读一次，按 `(pid, starttime)` 缓存到进程生命周期
+    结束，渲染只是读内存。
+  - 顶部汇总卡是第一层 slice（`system.slice` / `user.slice` / …），CPU 与内存各一条占比条；
+    下面是可折叠的层级行，每行带进程数、CPU 合计、内存合计和占比条。
+  - `/` 是真实的根 cgroup（内核线程都在那），单独成桶并如实命名；只有**读不到** cgroup 的
+    进程才计入「未归类」，两边不混。
+  - 搜索（名称 / PID / cgroup 路径）+ 全部/我的/系统范围 + 按 CPU / 内存 / 进程数排序。
+
 
 当前版本：`0.2.0-preview.5`。Appearance / Devices / Power 分区与启动器仍是静态占位；
 剩余外部工具默认在 `/home/root/GNOME`，可用 `GNOUS_FIXES_ROOT` 覆盖；内建后端状态在
@@ -126,8 +149,8 @@ src/
 │              #   + 每核 CPU / ctxt-intr 速率 / 内存三分解 + GPU 显存
 ├── ext.rs     # 扩展清单：Provider 抽象 + 文件/gsettings 默认后端
 ├── registry.rs # 编译期插件注册表：解析 extensions/*/manifest.toml，生成顶栏页面
-├── proc.rs    # 进程采样：/proc/<pid>/stat + status，CPU 差分、用户名、cgroup、
-│              #   RSS 细分与按需 smaps_rollup（PSS/USS）
+├── proc.rs    # 进程采样：/proc/<pid>/stat + status，CPU 差分、用户名、cgroup（带缓存）、
+│              #   PF_KTHREAD 标志、RSS 细分与按需 smaps_rollup（PSS/USS）
 ├── table_state.rs # Table 视图的筛选 / 排序 / 置顶 / 变化检测 / 行密度 / 刷新频率
 ├── table_prefs.rs # Table 偏好与操作日志的本地持久化（~/.config/gnous/table.json）
 ├── scroll.rs  # LED 滚动指示器状态（刻度、拖动、键盘跳转）

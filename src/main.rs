@@ -161,6 +161,22 @@ pub(crate) struct App {
     mem_prev_rss: HashMap<u32, u64>,
     /// `smaps_rollup` of the selected process, read on selection only.
     mem_smaps: Option<(u32, proc::Smaps)>,
+    /// Tree view: explicit open/closed per pid, overriding the depth default.
+    tree_open: HashMap<u32, bool>,
+    /// Tree view: open every node instead of the default two levels.
+    tree_all_open: bool,
+    /// Tree view: free-text filter, same rules as the Memory view.
+    tree_query: String,
+    /// Tree view: which processes to include.
+    tree_scope: table_state::Scope,
+    /// Groups view: free-text filter over names, PIDs and cgroup units.
+    group_query: String,
+    /// Groups view: which processes to include.
+    group_scope: table_state::Scope,
+    /// Groups view: collapsed slice paths.
+    group_closed: std::collections::HashSet<String>,
+    /// Groups view: how processes inside a slice are ordered.
+    group_sort: table_state::SortKey,
     proc_selected: Option<u32>,
     /// Pending signal awaiting the confirmation dialog.
     proc_dialog: Option<ProcDialog>,
@@ -321,6 +337,14 @@ impl App {
             mem_growth: HashMap::new(),
             mem_prev_rss: HashMap::new(),
             mem_smaps: None,
+            tree_open: HashMap::new(),
+            tree_all_open: false,
+            tree_query: String::new(),
+            tree_scope: table_state::Scope::All,
+            group_query: String::new(),
+            group_scope: table_state::Scope::All,
+            group_closed: std::collections::HashSet::new(),
+            group_sort: table_state::SortKey::Cpu,
             proc_selected: None,
             proc_dialog: None,
             proc_menu: None,
@@ -1341,6 +1365,80 @@ impl App {
         cx.notify();
     }
 
+    /// Flip one tree node between open and closed. The decision is stored per
+    /// pid so it survives the default depth rule and refreshes.
+    pub(crate) fn toggle_tree_node(&mut self, pid: u32, cx: &mut Context<Self>) {
+        let open = self
+            .tree_open
+            .get(&pid)
+            .copied()
+            .unwrap_or(self.tree_all_open);
+        self.tree_open.insert(pid, !open);
+        cx.notify();
+    }
+
+    /// `Expand all` / `Collapse all`: a global default that individual clicks
+    /// can still override afterwards.
+    pub(crate) fn set_tree_all_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        self.tree_all_open = open;
+        self.tree_open.clear();
+        cx.notify();
+    }
+
+    pub(crate) fn set_tree_scope(&mut self, scope: table_state::Scope, cx: &mut Context<Self>) {
+        self.tree_scope = scope;
+        cx.notify();
+    }
+
+    pub(crate) fn tree_query_char(&mut self, ch: char, cx: &mut Context<Self>) {
+        self.tree_query.push(ch);
+        cx.notify();
+    }
+
+    pub(crate) fn tree_query_backspace(&mut self, cx: &mut Context<Self>) {
+        self.tree_query.pop();
+        cx.notify();
+    }
+
+    pub(crate) fn tree_query_clear(&mut self, cx: &mut Context<Self>) {
+        self.tree_query.clear();
+        self.proc_selected = None;
+        cx.notify();
+    }
+
+    pub(crate) fn set_group_scope(&mut self, scope: table_state::Scope, cx: &mut Context<Self>) {
+        self.group_scope = scope;
+        cx.notify();
+    }
+
+    pub(crate) fn group_query_char(&mut self, ch: char, cx: &mut Context<Self>) {
+        self.group_query.push(ch);
+        cx.notify();
+    }
+
+    pub(crate) fn group_query_backspace(&mut self, cx: &mut Context<Self>) {
+        self.group_query.pop();
+        cx.notify();
+    }
+
+    pub(crate) fn group_query_clear(&mut self, cx: &mut Context<Self>) {
+        self.group_query.clear();
+        self.proc_selected = None;
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_group_path(&mut self, path: String, cx: &mut Context<Self>) {
+        if !self.group_closed.remove(&path) {
+            self.group_closed.insert(path);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn set_group_sort(&mut self, sort: table_state::SortKey, cx: &mut Context<Self>) {
+        self.group_sort = sort;
+        cx.notify();
+    }
+
     /// Select a process row; used by every process view.
     pub(crate) fn select_process(&mut self, pid: u32, cx: &mut Context<Self>) {
         self.proc_selected = if self.proc_selected == Some(pid) {
@@ -1650,6 +1748,14 @@ impl Render for App {
                             mem_group: self.mem_group,
                             mem_growth: &self.mem_growth,
                             mem_smaps: self.mem_smaps.as_ref().map(|(_, smaps)| smaps),
+                            tree_open: &self.tree_open,
+                            tree_all_open: self.tree_all_open,
+                            tree_query: &self.tree_query,
+                            tree_scope: self.tree_scope,
+                            group_query: &self.group_query,
+                            group_scope: self.group_scope,
+                            group_closed: &self.group_closed,
+                            group_sort: self.group_sort,
                             proc_selected,
                             table: &self.table,
                             my_uid: self.my_uid,
@@ -2106,6 +2212,14 @@ pub(crate) struct Overview<'a> {
     pub(crate) mem_group: bool,
     pub(crate) mem_growth: &'a HashMap<u32, (i64, Instant)>,
     pub(crate) mem_smaps: Option<&'a proc::Smaps>,
+    pub(crate) tree_open: &'a HashMap<u32, bool>,
+    pub(crate) tree_all_open: bool,
+    pub(crate) tree_query: &'a str,
+    pub(crate) tree_scope: table_state::Scope,
+    pub(crate) group_query: &'a str,
+    pub(crate) group_scope: table_state::Scope,
+    pub(crate) group_closed: &'a std::collections::HashSet<String>,
+    pub(crate) group_sort: table_state::SortKey,
     pub(crate) proc_selected: Option<u32>,
     pub(crate) table: &'a table_state::TableState,
     pub(crate) my_uid: u32,
@@ -2237,6 +2351,14 @@ impl App {
         self.nav.page.plugin == "processes" && self.nav.page.view == "memory"
     }
 
+    fn on_tree_view(&self) -> bool {
+        self.nav.page.plugin == "processes" && self.nav.page.view == "tree"
+    }
+
+    fn on_groups_view(&self) -> bool {
+        self.nav.page.plugin == "processes" && self.nav.page.view == "groups"
+    }
+
     /// The scroll area the indicator and the keyboard act on.
     fn active_led(&mut self, target: scroll::Target) -> &mut scroll::Led {
         match target {
@@ -2325,18 +2447,39 @@ impl App {
             }
             return;
         }
-        if self.on_memory_view() {
-            // The Memory view has no row cursor; plain characters filter the
-            // map, and the arrow keys stay with the page scroller.
+        // The Memory, Tree and Groups views have no row cursor: plain
+        // characters filter, and the arrow keys stay with the page scroller.
+        let filtered = if self.on_memory_view() {
+            Some(0u8)
+        } else if self.on_tree_view() {
+            Some(1)
+        } else if self.on_groups_view() {
+            Some(2)
+        } else {
+            None
+        };
+        if let Some(which) = filtered {
             match key {
-                "backspace" => self.mem_query_backspace(cx),
-                "escape" => self.mem_query_clear(cx),
+                "backspace" => match which {
+                    0 => self.mem_query_backspace(cx),
+                    1 => self.tree_query_backspace(cx),
+                    _ => self.group_query_backspace(cx),
+                },
+                "escape" => match which {
+                    0 => self.mem_query_clear(cx),
+                    1 => self.tree_query_clear(cx),
+                    _ => self.group_query_clear(cx),
+                },
                 ch if !ch.starts_with("ctrl-")
                     && ch.chars().count() == 1
                     && !ch.chars().next().unwrap().is_control() =>
                 {
                     for c in ch.chars() {
-                        self.mem_query_char(c, cx);
+                        match which {
+                            0 => self.mem_query_char(c, cx),
+                            1 => self.tree_query_char(c, cx),
+                            _ => self.group_query_char(c, cx),
+                        }
                     }
                 }
                 "up" | "down" | "pageup" | "pagedown" | "home" | "end" => {

@@ -2470,236 +2470,1088 @@ fn detail_button(
 // D · tree
 // ============================================================================
 
-fn tree(overview: &Overview, weak: &WeakEntity<App>) -> Div {
-    let snap = overview.proc;
-    let mut children: std::collections::HashMap<u32, Vec<&Process>> =
+/// Kernel threads have no user and would triple the row count on a desktop.
+/// The tree is about the user's process family, so they are counted and
+/// reported rather than drawn.
+fn is_kernel_thread(process: &Process) -> bool {
+    process.kernel || process.pid == 2 || process.ppid == 2
+}
+
+/// One visible line of the process tree, with its subtree already summed.
+struct TreeRow<'a> {
+    process: &'a Process,
+    depth: usize,
+    subtree_cpu: f32,
+    subtree_rss_kb: u64,
+    subtree_count: usize,
+    /// Direct children, so the row knows whether to show a toggle at all.
+    kids: usize,
+    open: bool,
+}
+
+/// What the tree could not show, reported instead of silently dropped.
+struct TreeStats {
+    hidden_kernel: usize,
+    /// Nodes skipped only because the row budget ran out.
+    truncated: usize,
+    roots: usize,
+}
+
+/// Sum one subtree bottom-up. `visiting` breaks the cycle a recycled pid can
+/// create when a parent exits and its number is reused before the next sample.
+fn tree_aggregate<'a>(
+    process: &'a Process,
+    children: &std::collections::HashMap<u32, Vec<&'a Process>>,
+    visiting: &mut std::collections::HashSet<u32>,
+    memo: &mut std::collections::HashMap<u32, (f32, u64, usize)>,
+    depth: usize,
+) -> (f32, u64, usize) {
+    if let Some(done) = memo.get(&process.pid) {
+        return *done;
+    }
+    let mut acc = (process.cpu, process.rss_kb, 1usize);
+    if depth < 96 && visiting.insert(process.pid) {
+        if let Some(kids) = children.get(&process.pid) {
+            for kid in kids {
+                if visiting.contains(&kid.pid) {
+                    continue;
+                }
+                let (cpu, rss, count) = tree_aggregate(kid, children, visiting, memo, depth + 1);
+                acc.0 += cpu;
+                acc.1 += rss;
+                acc.2 += count;
+            }
+        }
+        visiting.remove(&process.pid);
+    }
+    memo.insert(process.pid, acc);
+    acc
+}
+
+/// Build the visible tree.
+///
+/// `open_of(pid, depth)` decides expansion so the caller owns the policy: the
+/// view passes a closure over its own open/closed map, which keeps this
+/// function pure and testable.
+fn tree_rows<'a>(
+    processes: &'a [Process],
+    open_of: &dyn Fn(u32, usize) -> bool,
+    query: &str,
+    scope: Scope,
+    my_uid: u32,
+    limit: usize,
+) -> (Vec<TreeRow<'a>>, TreeStats) {
+    let in_scope = |process: &Process| match scope {
+        Scope::All => true,
+        Scope::Mine => process.uid == my_uid,
+        Scope::System => process.uid != my_uid,
+    };
+    let hidden_kernel = processes
+        .iter()
+        .filter(|process| is_kernel_thread(process))
+        .count();
+
+    let live: Vec<&Process> = processes
+        .iter()
+        .filter(|process| !is_kernel_thread(process) && in_scope(process))
+        .collect();
+    let known: std::collections::HashSet<u32> = live.iter().map(|p| p.pid).collect();
+
+    let mut children: std::collections::HashMap<u32, Vec<&'a Process>> =
         std::collections::HashMap::new();
-    for process in &snap.processes {
+    for process in &live {
         children.entry(process.ppid).or_default().push(process);
     }
-    let roots: Vec<&Process> = snap.processes.iter().filter(|p| p.pid == 1).collect();
-    let orphans: Vec<&Process> = snap
-        .processes
-        .iter()
-        .filter(|p| p.ppid == 0 || p.ppid == 1 || !children.contains_key(&p.ppid))
-        .filter(|p| p.pid != 1)
-        .collect();
+    // Process::Snapshot is already sorted by CPU, so insertion order gives
+    // busiest-first siblings for free.
 
-    let mut rows: Vec<Stateful<Div>> = Vec::new();
-    for root in roots {
-        push_tree(&mut rows, root, 0, overview, weak, &children);
+    // Roots: pid 1 when it survived the filter, plus anything whose parent is
+    // outside the set. Losing a parent must not hide a process.
+    let mut roots: Vec<&Process> = Vec::new();
+    for process in &live {
+        let orphan = process.pid != 1 && !known.contains(&process.ppid);
+        if process.pid == 1 || orphan {
+            roots.push(process);
+        }
     }
-    for root in orphans {
-        push_tree(&mut rows, root, 0, overview, weak, &children);
+    // A recycled pid can make two processes each other's parent, leaving both
+    // unreachable from pid 1. Sweep for anything the roots cannot reach and
+    // promote it, so no process can silently vanish from the tree.
+    {
+        let mut reachable: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        let mut stack: Vec<&Process> = roots.clone();
+        while let Some(process) = stack.pop() {
+            if !reachable.insert(process.pid) {
+                continue;
+            }
+            if let Some(kids) = children.get(&process.pid) {
+                stack.extend(kids.iter().copied());
+            }
+        }
+        for process in &live {
+            if !reachable.contains(&process.pid) {
+                roots.push(process);
+            }
+        }
+    }
+
+    // Search keeps a match and every ancestor of it, so the match is reachable.
+    let needle = query.trim().to_lowercase();
+    let visible: Option<std::collections::HashSet<u32>> = if needle.is_empty() {
+        None
+    } else {
+        let mut keep = std::collections::HashSet::new();
+        let parent_of: std::collections::HashMap<u32, u32> =
+            live.iter().map(|p| (p.pid, p.ppid)).collect();
+        for process in &live {
+            let hit = process.name.to_lowercase().contains(&needle)
+                || process.pid.to_string().contains(&needle);
+            if !hit {
+                continue;
+            }
+            keep.insert(process.pid);
+            let mut cursor = process.ppid;
+            let mut guard = 0;
+            while let Some(&up) = parent_of.get(&cursor) {
+                keep.insert(cursor);
+                if up == cursor || guard > 96 {
+                    break;
+                }
+                cursor = up;
+                guard += 1;
+            }
+        }
+        Some(keep)
+    };
+
+    let mut memo = std::collections::HashMap::new();
+    let mut visiting = std::collections::HashSet::new();
+    for root in &roots {
+        tree_aggregate(root, &children, &mut visiting, &mut memo, 0);
+    }
+
+    let mut rows: Vec<TreeRow<'a>> = Vec::new();
+    let mut truncated = 0usize;
+    let mut emitted: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    let mut drawn_roots = 0usize;
+    // Iterative DFS so a pathological tree cannot blow the stack.
+    let mut stack: Vec<(&Process, usize)> = roots.iter().rev().map(|p| (*p, 0)).collect();
+    while let Some((process, depth)) = stack.pop() {
+        // A cycle would otherwise re-emit the same pid forever.
+        if !emitted.insert(process.pid) {
+            continue;
+        }
+        let in_view = visible
+            .as_ref()
+            .map(|keep| keep.contains(&process.pid))
+            .unwrap_or(true);
+        if !in_view {
+            continue;
+        }
+        if rows.len() >= limit {
+            truncated += 1;
+            continue;
+        }
+        if depth == 0 {
+            drawn_roots += 1;
+        }
+        let kids = children.get(&process.pid).map(Vec::len).unwrap_or(0);
+        // A search always opens the path to its matches; otherwise the caller's
+        // policy decides, so a collapsed tree stays collapsed across refreshes.
+        let open = if visible.is_some() && kids > 0 {
+            true
+        } else {
+            open_of(process.pid, depth)
+        };
+        let (subtree_cpu, subtree_rss_kb, subtree_count) = memo
+            .get(&process.pid)
+            .copied()
+            .unwrap_or((process.cpu, process.rss_kb, 1));
+        rows.push(TreeRow {
+            process,
+            depth,
+            subtree_cpu,
+            subtree_rss_kb,
+            subtree_count,
+            kids,
+            open,
+        });
+        if open && let Some(kids) = children.get(&process.pid) {
+            to_stack(&mut stack, kids, depth + 1);
+        }
+    }
+
+    (
+        rows,
+        TreeStats {
+            hidden_kernel,
+            truncated,
+            roots: drawn_roots,
+        },
+    )
+}
+
+fn to_stack<'a>(stack: &mut Vec<(&'a Process, usize)>, kids: &[&'a Process], depth: usize) {
+    for kid in kids.iter().rev() {
+        stack.push((kid, depth));
+    }
+}
+
+fn tree(overview: &Overview, weak: &WeakEntity<App>) -> Div {
+    let open_of = |pid: u32, depth: usize| -> bool {
+        match overview.tree_open.get(&pid) {
+            Some(&open) => open,
+            None => overview.tree_all_open || depth < 2,
+        }
+    };
+    let (rows, stats) = tree_rows(
+        &overview.proc.processes,
+        &open_of,
+        overview.tree_query,
+        overview.tree_scope,
+        overview.my_uid,
+        TREE_ROW_LIMIT,
+    );
+    let selected = overview.proc_selected;
+
+    let expand_all = weak.clone();
+    let collapse_all = weak.clone();
+    let mut body = v();
+    for (index, row) in rows.iter().enumerate() {
+        body = body.child(tree_line(index, row, selected, weak));
+    }
+    if rows.is_empty() {
+        body = body.child(
+            v().py(px(40.))
+                .items_center()
+                .child(txt("没有匹配的进程", 13., FontWeight::NORMAL, muted()))
+                .child(
+                    txt(
+                        "清空搜索，或把范围切回「全部」。",
+                        10.5,
+                        FontWeight::NORMAL,
+                        dim(),
+                    )
+                    .mt(px(8.)),
+                ),
+        );
     }
 
     v().child(page_head(
         overview,
         "进程树",
         format!(
-            "{} 个进程 · 按父子关系展开 · 点击行查看详情",
-            snap.processes.len()
+            "{} 个进程 · {} 个根 · 面积无关，缩进表达父子关系",
+            overview.proc.processes.len(),
+            stats.roots
         ),
     ))
-    .children(rows)
-    .child(
-        txt(
-            "树来自 /proc/<pid>/stat 的 ppid；只为 CPU 最高的 300 个进程建树。",
-            10.,
-            FontWeight::NORMAL,
-            dim(),
+    .child(tree_toolbar(
+        overview,
+        weak,
+        rows.len(),
+        stats.roots,
+        expand_all,
+        collapse_all,
+    ))
+    .child(body)
+    .when(stats.truncated > 0, |this| {
+        this.child(
+            txt(
+                format!(
+                    "还有 {} 个节点没有画出：行数上限 {}。折叠上层或缩小范围可以看全。",
+                    stats.truncated, TREE_ROW_LIMIT
+                ),
+                10.,
+                FontWeight::NORMAL,
+                warn(),
+            )
+            .mt(px(16.)),
         )
-        .mt(px(18.)),
-    )
-}
-
-fn push_tree(
-    rows: &mut Vec<Stateful<Div>>,
-    process: &Process,
-    depth: usize,
-    overview: &Overview,
-    weak: &WeakEntity<App>,
-    children: &std::collections::HashMap<u32, Vec<&Process>>,
-) {
-    if depth > 8 || rows.len() > 300 {
-        return;
-    }
-    let pid = process.pid;
-    let selected = overview.proc_selected == Some(pid);
-    let row_weak = weak.clone();
-    let padding = 8. + depth as f32 * 18.;
-    rows.push(
-        h().id(("tree", pid as usize))
-            .relative()
-            .cursor_pointer()
-            .items_center()
-            .gap(px(10.))
-            .pl(px(padding))
-            .py(px(8.))
-            .border_b(px(1.))
-            .border_color(line_faint())
-            .when(selected, |this| {
-                this.bg(alpha(0xffffff0c)).child(
-                    div()
-                        .absolute()
-                        .left(px(0.))
-                        .top(px(6.))
-                        .bottom(px(6.))
-                        .w(px(2.))
-                        .bg(accent()),
-                )
-            })
-            .hover(|this| this.bg(alpha(0xffffff06)))
-            .on_click(move |_, _, cx| {
-                let _ = row_weak.update(cx, |app, cx| app.select_process(pid, cx));
-            })
-            .child(div().w(px(10.)).child(txt(
-                if depth > 0 { "└" } else { "" },
+    })
+    .when(stats.hidden_kernel > 0, |this| {
+        this.child(
+            txt(
+                format!(
+                    "已隐藏 {} 个内核线程（它们都挂在 kthreadd 下）。",
+                    stats.hidden_kernel
+                ),
                 10.,
                 FontWeight::NORMAL,
                 dim(),
-            )))
-            .child(txt(process.name.clone(), 12.5, FontWeight::NORMAL, text()))
-            .child(txt(format!("{pid}"), 10., FontWeight::NORMAL, dim()))
-            .child(
-                div()
-                    .size(px(5.))
-                    .rounded_full()
-                    .bg(state_color(process.state)),
             )
-            .child(div().flex_1())
-            .child(txt(
-                format!("CPU {:.1}%", process.cpu),
-                10.5,
+            .mt(px(10.)),
+        )
+    })
+}
+
+/// Row budget: enough for a desktop with a browser open, small enough that the
+/// layout pass stays cheap. Anything past it is reported, never silently cut.
+const TREE_ROW_LIMIT: usize = 600;
+
+fn tree_toolbar(
+    overview: &Overview,
+    weak: &WeakEntity<App>,
+    visible_rows: usize,
+    roots: usize,
+    expand_all: WeakEntity<App>,
+    collapse_all: WeakEntity<App>,
+) -> Div {
+    let query = overview.tree_query;
+    let chip = |id: &'static str, label: &str, active: bool, scope: Scope| {
+        tool_button(id, label, active, {
+            let weak = weak.clone();
+            Box::new(move |cx: &mut GpuiApp| {
+                let _ = weak.update(cx, |app, cx| app.set_tree_scope(scope, cx));
+            })
+        })
+    };
+    h().flex_wrap()
+        .items_center()
+        .gap(px(6.))
+        .mb(px(14.))
+        .child(search_box(
+            query,
+            "名称或 PID",
+            if query.is_empty() {
+                "Esc 清空"
+            } else {
+                "匹配项会自动展开到可见"
+            },
+        ))
+        .child(chip(
+            "tree-scope-all",
+            Scope::All.label(),
+            overview.tree_scope == Scope::All,
+            Scope::All,
+        ))
+        .child(chip(
+            "tree-scope-mine",
+            Scope::Mine.label(),
+            overview.tree_scope == Scope::Mine,
+            Scope::Mine,
+        ))
+        .child(chip(
+            "tree-scope-system",
+            Scope::System.label(),
+            overview.tree_scope == Scope::System,
+            Scope::System,
+        ))
+        .child(tool_button(
+            "tree-expand",
+            "全部展开",
+            overview.tree_all_open,
+            {
+                Box::new(move |cx: &mut GpuiApp| {
+                    let _ = expand_all.update(cx, |app, cx| app.set_tree_all_open(true, cx));
+                })
+            },
+        ))
+        .child(tool_button("tree-collapse", "回到两层", false, {
+            Box::new(move |cx: &mut GpuiApp| {
+                let _ = collapse_all.update(cx, |app, cx| app.set_tree_all_open(false, cx));
+            })
+        }))
+        .child(styled_label_s(
+            &format!("{visible_rows} 行可见 · {roots} 个根"),
+            10.,
+            dim(),
+        ))
+}
+
+fn tree_line(
+    index: usize,
+    row: &TreeRow,
+    selected: Option<u32>,
+    weak: &WeakEntity<App>,
+) -> Stateful<Div> {
+    let pid = row.process.pid;
+    let is_selected = selected == Some(pid);
+    let click = weak.clone();
+    let toggle = weak.clone();
+    let padding = 8. + row.depth as f32 * 16.;
+    let kids = row.kids;
+
+    h().id(("tree", index))
+        .relative()
+        .cursor_pointer()
+        .items_center()
+        .gap(px(9.))
+        .pl(px(padding))
+        .pr(px(10.))
+        .py(px(6.))
+        .border_b(px(1.))
+        .border_color(line_faint())
+        .when(is_selected, |this| {
+            this.bg(alpha(0xffffff0c)).child(
+                div()
+                    .absolute()
+                    .left(px(0.))
+                    .top(px(5.))
+                    .bottom(px(5.))
+                    .w(px(2.))
+                    .bg(accent()),
+            )
+        })
+        .hover(|this| this.bg(alpha(0xffffff06)))
+        .on_click(move |_, _, cx| {
+            let _ = click.update(cx, |app, cx| app.select_process(pid, cx));
+        })
+        .child(
+            div()
+                .id(("tree-toggle", index))
+                .w(px(11.))
+                .flex_shrink_0()
+                .cursor_pointer()
+                .when(kids > 0, |this| {
+                    let toggle = toggle.clone();
+                    this.on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        let _ = toggle.update(cx, |app, cx| app.toggle_tree_node(pid, cx));
+                    })
+                })
+                .child(txt(
+                    if kids == 0 {
+                        ""
+                    } else if row.open {
+                        "▾"
+                    } else {
+                        "▸"
+                    },
+                    10.,
+                    FontWeight::NORMAL,
+                    if kids == 0 { dim() } else { muted() },
+                )),
+        )
+        .child(txt(
+            row.process.name.clone(),
+            12.,
+            FontWeight::NORMAL,
+            text(),
+        ))
+        .child(txt(
+            format!("{}", row.process.pid),
+            9.5,
+            FontWeight::NORMAL,
+            dim(),
+        ))
+        .child(
+            div()
+                .size(px(5.))
+                .rounded_full()
+                .bg(state_color(row.process.state)),
+        )
+        .when(kids > 0, |this| {
+            this.child(txt(
+                format!("{} 子 · {} 个后代进程", kids, row.subtree_count - 1),
+                9.5,
                 FontWeight::NORMAL,
                 dim(),
             ))
-            .child(txt(process.mem_label(), 10.5, FontWeight::NORMAL, dim()))
-            .child(div().w(px(90.)).flex().justify_end().child(txt(
-                format!("{} 线程", process.threads),
-                10.5,
-                FontWeight::NORMAL,
-                dim(),
-            ))),
-    );
-    if let Some(kids) = children.get(&pid) {
-        for child in kids {
-            push_tree(rows, child, depth + 1, overview, &weak, children);
-        }
-    }
+        })
+        .child(div().flex_1())
+        // The whole point of a tree: the subtree totals, not just this row.
+        .child(txt(
+            format!("{:.1}%", row.subtree_cpu),
+            10.5,
+            FontWeight::NORMAL,
+            if row.subtree_cpu >= 1. {
+                muted()
+            } else {
+                dim()
+            },
+        ))
+        .child(div().w(px(78.)).flex().justify_end().child(txt(
+            kb_label(row.subtree_rss_kb),
+            10.5,
+            FontWeight::NORMAL,
+            dim(),
+        )))
+        .child(div().w(px(62.)).flex().justify_end().child(txt(
+            format!("{} 线程", row.process.threads),
+            9.5,
+            FontWeight::NORMAL,
+            dim(),
+        )))
 }
 
 // ============================================================================
 // E · groups
 // ============================================================================
 
-fn groups(overview: &Overview, weak: &WeakEntity<App>) -> Div {
-    let snap = overview.proc;
-    let mut system: Vec<&Process> = Vec::new();
-    let mut session: Vec<&Process> = Vec::new();
-    let mut apps: Vec<&Process> = Vec::new();
-    let mut other: Vec<&Process> = Vec::new();
-    for process in &snap.processes {
-        let slices = proc::cgroups(process.pid);
-        let joined = slices.join("/");
-        if joined.contains("app.slice") || joined.contains("apps.slice") {
-            apps.push(process);
-        } else if joined.contains("user@") || joined.contains("user.slice") {
-            session.push(process);
-        } else if joined.starts_with("system.slice") || joined.contains("system.slice") {
-            system.push(process);
-        } else {
-            other.push(process);
+/// One slice / service / scope node, aggregated over everything below it.
+struct SliceNode {
+    /// Full cgroup path, used as the collapse key and for stable ids.
+    path: String,
+    name: String,
+    depth: usize,
+    cpu: f32,
+    rss_kb: u64,
+    count: usize,
+    children: Vec<usize>,
+    /// Pids whose own cgroup is exactly this node.
+    direct: Vec<u32>,
+    /// Busiest process directly inside, for the leaf preview.
+    busiest: Option<u32>,
+}
+
+impl SliceNode {
+    fn root() -> Self {
+        Self {
+            path: String::new(),
+            name: String::new(),
+            depth: 0,
+            cpu: 0.,
+            rss_kb: 0,
+            count: 0,
+            children: Vec::new(),
+            direct: Vec::new(),
+            busiest: None,
         }
     }
-    let group = |title: &str, list: Vec<&Process>, tint: gpui_kit::Hsla| {
-        group_card(title, &list, tint, weak)
+}
+
+/// Build the cgroup hierarchy from the paths already sampled into `Process`.
+///
+/// This used to read `/proc/<pid>/cgroup` inside the render loop, which meant
+/// several hundred file reads per frame on a busy machine. Now it is a pure
+/// function over data the sampler already has.
+fn slice_tree(processes: &[&Process]) -> (Vec<SliceNode>, usize) {
+    let mut nodes = vec![SliceNode::root()];
+    let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut chains: Vec<(Vec<usize>, &Process)> = Vec::with_capacity(processes.len());
+    let mut ungrouped = 0usize;
+
+    for process in processes {
+        let mut components = proc::cgroup_components(&process.cgroup);
+        // `/` is the real root cgroup, not a missing reading. Kernel threads
+        // live there, so it gets its own bucket instead of being lumped in with
+        // processes whose cgroup could not be read at all.
+        let unreadable = components.is_empty() && process.cgroup.trim() != "/";
+        if components.is_empty() && !unreadable {
+            components.push(ROOT_CGROUP_NAME.to_string());
+        }
+        let mut parent = 0usize;
+        let mut path = String::new();
+        // The root is part of every chain so the total covers every process.
+        let mut chain = vec![0usize];
+        for component in components {
+            path.push('/');
+            path.push_str(&component);
+            let ix = match index.get(&path) {
+                Some(&ix) => ix,
+                None => {
+                    let ix = nodes.len();
+                    nodes.push(SliceNode {
+                        path: path.clone(),
+                        name: component.clone(),
+                        depth: nodes[parent].depth + 1,
+                        cpu: 0.,
+                        rss_kb: 0,
+                        count: 0,
+                        children: Vec::new(),
+                        direct: Vec::new(),
+                        busiest: None,
+                    });
+                    nodes[parent].children.push(ix);
+                    index.insert(path.clone(), ix);
+                    ix
+                }
+            };
+            chain.push(ix);
+            parent = ix;
+        }
+        if unreadable {
+            ungrouped += 1;
+        }
+        chains.push((chain, *process));
+    }
+
+    for (chain, process) in &chains {
+        for &ix in chain {
+            nodes[ix].cpu += process.cpu;
+            nodes[ix].rss_kb += process.rss_kb;
+            nodes[ix].count += 1;
+        }
+        if let Some(&leaf) = chain.last() {
+            nodes[leaf].direct.push(process.pid);
+            let busiest = nodes[leaf].busiest;
+            let better = match busiest {
+                None => true,
+                Some(pid) => chains
+                    .iter()
+                    .find(|(_, p)| p.pid == pid)
+                    .map(|(_, p)| process.cpu > p.cpu)
+                    .unwrap_or(true),
+            };
+            if better {
+                nodes[leaf].busiest = Some(process.pid);
+            }
+        }
+    }
+    (nodes, ungrouped)
+}
+
+/// Display name for the root cgroup bucket. It is a real cgroup (`/`), so it is
+/// named after what it is rather than left looking like a parse failure.
+const ROOT_CGROUP_NAME: &str = "根 cgroup (/)";
+
+/// The buckets in the summary cards: the top level of the cgroup hierarchy.
+fn slice_buckets(nodes: &[SliceNode]) -> Vec<usize> {
+    nodes[0].children.clone()
+}
+
+/// Order sibling units so the heaviest is on top. The tree is not a flat list,
+/// so this only reorders within one parent and keeps the shape intact.
+fn sort_slices(nodes: &mut [SliceNode], key: SortKey) {
+    // Children are indices into the same arena, so collect keys first and then
+    // permute each child list; nothing borrows across the mutation.
+    let measure: Vec<(f32, u64, usize, String)> = nodes
+        .iter()
+        .map(|node| (node.cpu, node.rss_kb, node.count, node.path.clone()))
+        .collect();
+    for node in nodes.iter_mut() {
+        node.children.sort_by(|a, b| {
+            let (ca, ra, na, pa) = &measure[*a];
+            let (cb, rb, nb, pb) = &measure[*b];
+            match key {
+                SortKey::Memory => rb.cmp(ra).then_with(|| pb.cmp(pa)),
+                SortKey::Threads => nb.cmp(na).then_with(|| pb.cmp(pa)),
+                _ => cb
+                    .partial_cmp(ca)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| pb.cmp(pa)),
+            }
+        });
+    }
+}
+
+const GROUP_ROW_LIMIT: usize = 400;
+
+fn groups(overview: &Overview, weak: &WeakEntity<App>) -> Div {
+    let needle = overview.group_query.trim().to_lowercase();
+    let in_scope = |process: &Process| match overview.group_scope {
+        Scope::All => true,
+        Scope::Mine => process.uid == overview.my_uid,
+        Scope::System => process.uid != overview.my_uid,
     };
-    h().items_stretch()
+    let matched: Vec<&Process> = overview
+        .proc
+        .processes
+        .iter()
+        .filter(|process| in_scope(process))
+        .filter(|process| {
+            if needle.is_empty() {
+                return true;
+            }
+            process.name.to_lowercase().contains(&needle)
+                || process.pid.to_string().contains(&needle)
+                || process.cgroup.to_lowercase().contains(&needle)
+        })
+        .collect();
+
+    let (mut nodes, ungrouped) = slice_tree(&matched);
+    sort_slices(&mut nodes, overview.group_sort);
+    let buckets = slice_buckets(&nodes);
+    let total_cpu: f32 = matched.iter().map(|p| p.cpu).sum();
+    let total_rss: u64 = matched.iter().map(|p| p.rss_kb).sum();
+
+    let mut cards = h()
+        .items_stretch()
         .gap(px(1.))
         .bg(line())
         .border(px(1.))
         .border_color(line())
-        .child(group("系统服务 · system.slice", system, text()))
-        .child(group("用户会话 · user.slice", session, muted()))
-        .child(group("前台应用 · app.slice", apps, accent()))
-        .when(!other.is_empty(), |this| {
-            this.child(group("其他 · 未归类", other, dim()))
-        })
-}
-
-fn group_card(
-    title: &str,
-    processes: &[&Process],
-    tint: gpui_kit::Hsla,
-    weak: &WeakEntity<App>,
-) -> Div {
-    let cpu: f32 = processes.iter().map(|p| p.cpu).sum();
-    let mem: u64 = processes.iter().map(|p| p.rss_kb).sum();
-    let max = processes.iter().map(|p| p.cpu).fold(1., f32::max);
-    let mut list = processes.to_vec();
-    list.sort_by(|a, b| b.cpu.total_cmp(&a.cpu));
-    let top: Vec<&Process> = list.iter().take(5).copied().collect();
-    let mut rows: Vec<Stateful<Div>> = Vec::new();
-    for process in &top {
-        let pid = process.pid;
-        let weak = weak.clone();
-        rows.push(
-            h().id(("grp", pid as usize))
-                .cursor_pointer()
-                .justify_between()
-                .items_end()
-                .py(px(8.))
-                .border_b(px(1.))
-                .border_color(line_faint())
-                .hover(|this| this.bg(alpha(0xffffff06)))
-                .on_click(move |_, _, cx| {
-                    let _ = weak.update(cx, |app, cx| app.select_process(pid, cx));
-                })
+        .mb(px(18.));
+    for &ix in buckets.iter().take(4) {
+        cards = cards.child(slice_card(ix, &nodes[ix], total_cpu, total_rss, weak));
+    }
+    if buckets.is_empty() {
+        cards = cards.child(
+            v().flex_1()
+                .bg(black())
+                .p(px(22.))
+                .child(txt(
+                    "读不到任何 cgroup 信息",
+                    12.,
+                    FontWeight::NORMAL,
+                    muted(),
+                ))
                 .child(
-                    v().min_w_0()
-                        .child(txt(process.name.clone(), 11.5, FontWeight::NORMAL, text()))
-                        .child(txt(
-                            format!("{} · {}", process.user, process.state.label()),
-                            9.5,
-                            FontWeight::NORMAL,
-                            dim(),
-                        )),
-                )
-                .child(
-                    v().items_end()
-                        .child(txt(
-                            format!("{:.1}%", process.cpu),
-                            11.,
-                            FontWeight::NORMAL,
-                            muted(),
-                        ))
-                        .child(txt(process.mem_label(), 9.5, FontWeight::NORMAL, dim())),
+                    txt(
+                        "容器或受限环境下 /proc/<pid>/cgroup 可能为空，这里不会猜一个分组出来。",
+                        10.,
+                        FontWeight::NORMAL,
+                        dim(),
+                    )
+                    .mt(px(8.)),
                 ),
         );
     }
+
+    let mut lines: Vec<gpui_kit::AnyElement> = Vec::new();
+    for &ix in buckets.iter() {
+        slice_lines(
+            &nodes,
+            ix,
+            overview.group_closed,
+            total_cpu,
+            overview.proc_selected,
+            weak,
+            &mut lines,
+        );
+        if lines.len() >= GROUP_ROW_LIMIT {
+            break;
+        }
+    }
+    let drawn = lines.len();
+    let tree_body = v().children(lines);
+
+    v().child(page_head(
+        overview,
+        "进程分组",
+        format!(
+            "{} 个进程 · {} 个 cgroup 单元 · 分组来自 /proc/<pid>/cgroup",
+            matched.len(),
+            nodes.len().saturating_sub(1)
+        ),
+    ))
+    .child(group_toolbar(
+        overview, weak, total_cpu, total_rss, ungrouped,
+    ))
+    .child(cards)
+    .child(tree_body)
+    .when(drawn >= GROUP_ROW_LIMIT, |this| {
+        this.child(
+            txt(
+                format!("只画到第 {GROUP_ROW_LIMIT} 行，折叠上层可以看全。"),
+                10.,
+                FontWeight::NORMAL,
+                dim(),
+            )
+            .mt(px(14.)),
+        )
+    })
+    .when(ungrouped == 0, |this| {
+        this.child(
+            txt(
+                "这些进程没有可读的 cgroup 路径，所以没有归入任何 slice。",
+                10.,
+                FontWeight::NORMAL,
+                dim(),
+            )
+            .mt(px(14.)),
+        )
+    })
+}
+
+fn group_toolbar(
+    overview: &Overview,
+    weak: &WeakEntity<App>,
+    total_cpu: f32,
+    total_rss: u64,
+    ungrouped: usize,
+) -> Div {
+    let query = overview.group_query;
+    let chip = |id: &'static str, label: &str, active: bool, scope: Scope| {
+        tool_button(id, label, active, {
+            let weak = weak.clone();
+            Box::new(move |cx: &mut GpuiApp| {
+                let _ = weak.update(cx, |app, cx| app.set_group_scope(scope, cx));
+            })
+        })
+    };
+    h().flex_wrap()
+        .items_center()
+        .gap(px(6.))
+        .mb(px(14.))
+        .child(search_box(
+            query,
+            "名称 / PID / cgroup",
+            if query.is_empty() {
+                "Esc 清空"
+            } else {
+                "只统计匹配到的进程"
+            },
+        ))
+        .child(chip(
+            "group-scope-all",
+            Scope::All.label(),
+            overview.group_scope == Scope::All,
+            Scope::All,
+        ))
+        .child(chip(
+            "group-scope-mine",
+            Scope::Mine.label(),
+            overview.group_scope == Scope::Mine,
+            Scope::Mine,
+        ))
+        .child(chip(
+            "group-scope-system",
+            Scope::System.label(),
+            overview.group_scope == Scope::System,
+            Scope::System,
+        ))
+        .child({
+            let sort_chip = |id: &'static str, label: &str, key: SortKey| {
+                tool_button(id, label, overview.group_sort == key, {
+                    let weak = weak.clone();
+                    Box::new(move |cx: &mut GpuiApp| {
+                        let _ = weak.update(cx, |app, cx| app.set_group_sort(key, cx));
+                    })
+                })
+            };
+            h().gap(px(6.))
+                .child(sort_chip("group-sort-cpu", "按 CPU", SortKey::Cpu))
+                .child(sort_chip("group-sort-mem", "按内存", SortKey::Memory))
+                .child(sort_chip("group-sort-count", "按进程数", SortKey::Threads))
+        })
+        .child(styled_label_s(
+            &format!("合计 {:.1}% CPU · {}", total_cpu, kb_label(total_rss)),
+            10.,
+            dim(),
+        ))
+        .when(ungrouped > 0, |this| {
+            this.child(styled_label_s(
+                &format!("{ungrouped} 个未归类"),
+                10.,
+                warn(),
+            ))
+        })
+}
+
+/// Draw `node` and, when open, its children. Returns how many lines were drawn
+/// so the caller can stop at the row budget.
+fn slice_lines(
+    nodes: &[SliceNode],
+    ix: usize,
+    closed: &std::collections::HashSet<String>,
+    total_cpu: f32,
+    selected: Option<u32>,
+    weak: &WeakEntity<App>,
+    out: &mut Vec<gpui_kit::AnyElement>,
+) -> usize {
+    if out.len() >= GROUP_ROW_LIMIT {
+        return 0;
+    }
+    let node = &nodes[ix];
+    // Two levels open by default: the slice tree is wide, not deep.
+    let open = !closed.contains(&node.path) && node.depth < 3;
+    out.push(slice_line(node, total_cpu, selected, weak, open, ix).into_any_element());
+    let mut drawn = 1;
+    if open {
+        for &kid in &node.children {
+            drawn += slice_lines(nodes, kid, closed, total_cpu, selected, weak, out);
+            if out.len() >= GROUP_ROW_LIMIT {
+                break;
+            }
+        }
+        // Leaf units show their busiest process once expanded.
+        if node.children.is_empty()
+            && node.direct.len() > 1
+            && let Some(busiest) = node.busiest
+        {
+            out.push(
+                slice_process_line(nodes, ix, busiest, node.depth + 1, selected, weak)
+                    .into_any_element(),
+            );
+            drawn += 1;
+        }
+    }
+    drawn
+}
+
+fn slice_line(
+    node: &SliceNode,
+    total_cpu: f32,
+    selected: Option<u32>,
+    weak: &WeakEntity<App>,
+    open: bool,
+    ix: usize,
+) -> Stateful<Div> {
+    let path = node.path.clone();
+    let toggle = weak.clone();
+    let has_kids = !node.children.is_empty();
+    let share = if total_cpu <= 0. {
+        0.
+    } else {
+        (node.cpu / total_cpu).clamp(0., 1.)
+    };
+    let padding = 8. + node.depth as f32 * 16.;
+    let is_selected = selected
+        .map(|pid| node.direct.contains(&pid))
+        .unwrap_or(false);
+
+    h().id(("slice", ix))
+        .relative()
+        .items_center()
+        .gap(px(9.))
+        .pl(px(padding))
+        .pr(px(10.))
+        .py(px(6.))
+        .border_b(px(1.))
+        .border_color(line_faint())
+        .when(is_selected, |this| this.bg(alpha(0xffffff0a)))
+        .hover(|this| this.bg(alpha(0xffffff06)))
+        .child(
+            div()
+                .id(("slice-toggle", ix))
+                .w(px(11.))
+                .flex_shrink_0()
+                .when(has_kids, |this| {
+                    let toggle = toggle.clone();
+                    this.cursor_pointer().on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        let path = path.clone();
+                        let _ = toggle.update(cx, |app, cx| app.toggle_group_path(path, cx));
+                    })
+                })
+                .child(txt(
+                    if has_kids {
+                        if open { "▾" } else { "▸" }
+                    } else {
+                        ""
+                    },
+                    10.,
+                    FontWeight::NORMAL,
+                    if has_kids { muted() } else { dim() },
+                )),
+        )
+        .child(txt(
+            node.name.clone(),
+            11.5,
+            FontWeight::NORMAL,
+            if node.depth <= 1 { text() } else { muted() },
+        ))
+        .child(txt(
+            format!("{} 进程", node.count),
+            9.5,
+            FontWeight::NORMAL,
+            dim(),
+        ))
+        .child(div().flex_1())
+        // Share of the visible CPU, as a bar: this is the only honest way to
+        // show "who is eating the machine" without inventing a number.
+        .child(
+            div()
+                .w(px(90.))
+                .h(px(3.))
+                .bg(line_faint())
+                .child(div().h_full().w(relative(share)).bg(accent())),
+        )
+        .child(div().w(px(52.)).flex().justify_end().child(txt(
+            format!("{:.1}%", node.cpu),
+            10.,
+            FontWeight::NORMAL,
+            muted(),
+        )))
+        .child(div().w(px(74.)).flex().justify_end().child(txt(
+            kb_label(node.rss_kb),
+            10.,
+            FontWeight::NORMAL,
+            dim(),
+        )))
+}
+
+fn slice_process_line(
+    nodes: &[SliceNode],
+    ix: usize,
+    pid: u32,
+    depth: usize,
+    selected: Option<u32>,
+    weak: &WeakEntity<App>,
+) -> Stateful<Div> {
+    let click = weak.clone();
+    let is_selected = selected == Some(pid);
+    let cpu = nodes[ix].cpu;
+    h().id(("slice-proc", ix))
+        .items_center()
+        .gap(px(9.))
+        .pl(px(8. + depth as f32 * 16.))
+        .pr(px(10.))
+        .py(px(5.))
+        .cursor_pointer()
+        .border_b(px(1.))
+        .border_color(line_faint())
+        .when(is_selected, |this| this.bg(alpha(0xffffff0a)))
+        .hover(|this| this.bg(alpha(0xffffff06)))
+        .on_click(move |_, _, cx| {
+            let _ = click.update(cx, |app, cx| app.select_process(pid, cx));
+        })
+        .child(
+            div()
+                .w(px(11.))
+                .child(txt("·", 10., FontWeight::NORMAL, dim())),
+        )
+        .child(txt(
+            format!("最忙 PID {pid}"),
+            10.5,
+            FontWeight::NORMAL,
+            muted(),
+        ))
+        .child(div().flex_1())
+        .child(txt(format!("{cpu:.1}%"), 9.5, FontWeight::NORMAL, dim()))
+}
+
+fn slice_card(
+    ix: usize,
+    node: &SliceNode,
+    total_cpu: f32,
+    total_rss: u64,
+    weak: &WeakEntity<App>,
+) -> Div {
+    let share = if total_cpu <= 0. {
+        0.
+    } else {
+        (node.cpu / total_cpu).clamp(0., 1.)
+    };
+    let rss_share = if total_rss == 0 {
+        0.
+    } else {
+        (node.rss_kb as f32 / total_rss as f32).clamp(0., 1.)
+    };
+    let toggle = weak.clone();
+    let path = node.path.clone();
+    let name = node.path.clone();
     v().flex_1()
         .min_w_0()
         .bg(black())
-        .p(px(22.))
-        .child(caps(title, 10., FontWeight::NORMAL, dim(), 0.22))
+        .p(px(20.))
+        .child(
+            h().id(("slice-card", ix))
+                .items_center()
+                .gap(px(6.))
+                .cursor_pointer()
+                .on_click(move |_, _, cx| {
+                    let path = path.clone();
+                    let _ = toggle.update(cx, |app, cx| app.toggle_group_path(path, cx));
+                })
+                .child(caps(
+                    node.name.as_str(),
+                    10.,
+                    FontWeight::NORMAL,
+                    dim(),
+                    0.18,
+                )),
+        )
         .child(
             h().items_end()
                 .gap(px(6.))
-                .mt(px(12.))
+                .mt(px(10.))
                 .child(
-                    txt(format!("{:.1}", cpu), 28., FontWeight::EXTRA_LIGHT, text())
-                        .line_height(px(30.)),
+                    txt(
+                        format!("{:.1}", node.cpu),
+                        26.,
+                        FontWeight::EXTRA_LIGHT,
+                        text(),
+                    )
+                    .line_height(px(28.)),
                 )
-                .child(txt("% CPU", 10., FontWeight::LIGHT, muted()).mb(px(4.))),
+                .child(txt("% CPU", 9.5, FontWeight::LIGHT, muted()).mb(px(4.))),
         )
         .child(
             txt(
-                format!(
-                    "{} 个进程 · 内存 {:.1} GB",
-                    processes.len(),
-                    mem as f32 / 1024. / 1024.
-                ),
+                format!("{} 个进程 · {}", node.count, kb_label(node.rss_kb)),
                 10.,
                 FontWeight::NORMAL,
                 dim(),
@@ -2707,19 +3559,70 @@ fn group_card(
             .mt(px(4.)),
         )
         .child(
-            h().h(px(3.))
+            div()
+                .h(px(3.))
                 .w_full()
-                .mt(px(14.))
-                .gap(px(1.))
-                .children(top.iter().map(|process| {
-                    div()
-                        .h_full()
-                        .w(relative((process.cpu / max).clamp(0., 1.)))
-                        .bg(tint)
-                        .opacity(0.4 + (process.cpu / max) * 0.6)
-                })),
+                .mt(px(12.))
+                .bg(line_faint())
+                .child(div().h_full().w(relative(share)).bg(accent())),
         )
-        .child(v().mt(px(16.)).children(rows))
+        .child(
+            div()
+                .h(px(2.))
+                .w_full()
+                .mt(px(3.))
+                .bg(line_faint())
+                .child(div().h_full().w(relative(rss_share)).bg(muted())),
+        )
+        .child(
+            txt(
+                format!("{} 个子单元", node.children.len()),
+                9.5,
+                FontWeight::NORMAL,
+                dim(),
+            )
+            .mt(px(10.)),
+        )
+        .child(
+            txt(name, 8.5, FontWeight::NORMAL, dim())
+                .mt(px(4.))
+                .max_w_full(),
+        )
+}
+
+/// Human-readable size, used by the tree totals and the group cards.
+fn kb_label(kb: u64) -> String {
+    if kb >= 1024 * 1024 {
+        format!("{:.1} GB", kb as f32 / 1024. / 1024.)
+    } else if kb >= 1024 {
+        format!("{:.0} MB", kb as f32 / 1024.)
+    } else {
+        format!("{kb} KB")
+    }
+}
+
+/// Search field shared by the Memory, Tree and Groups views: same shape, same
+/// keyboard rules, so learning one teaches all three.
+fn search_box(query: &str, placeholder: &str, hint: &str) -> Div {
+    h().items_center()
+        .w(px(248.))
+        .px(px(9.))
+        .py(px(5.))
+        .gap(px(6.))
+        .border(px(1.))
+        .border_color(if query.is_empty() {
+            line_strong()
+        } else {
+            accent()
+        })
+        .child(caps("搜索", 8.5, FontWeight::NORMAL, dim(), 0.14))
+        .child(if query.is_empty() {
+            styled_label(placeholder, dim())
+        } else {
+            styled_label(query, text())
+        })
+        .child(div().flex_1())
+        .child(styled_label_s(hint, 9., dim()))
 }
 
 #[cfg(test)]
@@ -2776,6 +3679,231 @@ mod tests {
         assert!((single[0].rect.h - 50.).abs() < 0.5);
         // Zero total would divide by zero; it must return nothing instead.
         assert!(squarify(&[cell(0)], 100., 100.).is_empty());
+    }
+
+    fn proc(pid: u32, ppid: u32, name: &str, cpu: f32, rss_kb: u64, uid: u32) -> Process {
+        Process {
+            pid,
+            ppid,
+            name: name.to_string(),
+            user: "u".into(),
+            uid,
+            state: crate::proc::State::Sleeping,
+            cpu,
+            rss_kb,
+            threads: 1,
+            age_secs: 0,
+            rss_anon_kb: rss_kb,
+            rss_file_kb: 0,
+            rss_shmem_kb: 0,
+            swap_kb: 0,
+            vm_peak_kb: rss_kb,
+            cgroup: String::new(),
+            kernel: false,
+            history: Vec::new(),
+        }
+    }
+
+    fn sample_tree() -> Vec<Process> {
+        //  1 init
+        //  ├─ 10 shell       cpu 2, rss 100
+        //  │   ├─ 11 editor  cpu 5, rss 200
+        //  │   └─ 12 vim     cpu 1, rss 50
+        //  └─ 20 daemon      cpu 4, rss 300
+        //  99 orphan (parent gone)
+        //  2 kthreadd (kernel thread, must be hidden)
+        vec![
+            proc(1, 0, "init", 0., 10, 0),
+            proc(10, 1, "shell", 2., 100, 1000),
+            proc(11, 10, "editor", 5., 200, 1000),
+            proc(12, 10, "vim", 1., 50, 1000),
+            proc(20, 1, "daemon", 4., 300, 0),
+            proc(99, 7777, "orphan", 0., 20, 1000),
+            proc(2, 0, "kthreadd", 0., 0, 0),
+        ]
+    }
+
+    #[test]
+    fn tree_hides_kernel_threads_and_keeps_orphans() {
+        let procs = sample_tree();
+        let (rows, stats) = tree_rows(&procs, &|_, _| true, "", Scope::All, 1000, 100);
+        let pids: Vec<u32> = rows.iter().map(|row| row.process.pid).collect();
+        assert!(!pids.contains(&2), "kernel thread must not be drawn");
+        assert_eq!(stats.hidden_kernel, 1);
+        assert!(pids.contains(&99), "an orphan still has to be reachable");
+        // Its parent does not exist, so it becomes its own root.
+        assert_eq!(stats.roots, 2);
+    }
+
+    #[test]
+    fn tree_totals_come_from_the_whole_subtree() {
+        let procs = sample_tree();
+        let (rows, _) = tree_rows(&procs, &|_, _| true, "", Scope::All, 1000, 100);
+        let shell = rows
+            .iter()
+            .find(|row| row.process.pid == 10)
+            .expect("shell");
+        // 2 (shell) + 5 (editor) + 1 (vim) = 8, and every byte below it.
+        assert!(
+            (shell.subtree_cpu - 8.).abs() < 0.01,
+            "{}",
+            shell.subtree_cpu
+        );
+        assert_eq!(shell.subtree_rss_kb, 350);
+        assert_eq!(shell.subtree_count, 3);
+        let init = rows.iter().find(|row| row.process.pid == 1).expect("init");
+        assert!(
+            (init.subtree_cpu - 12.).abs() < 0.01,
+            "{}",
+            init.subtree_cpu
+        );
+    }
+
+    #[test]
+    fn tree_depth_and_collapse_follow_the_policy() {
+        let procs = sample_tree();
+        // Open only the roots: the children of pid 1 must disappear.
+        let (rows, _) = tree_rows(&procs, &|_, depth| depth == 0, "", Scope::All, 1000, 100);
+        let pids: Vec<u32> = rows.iter().map(|row| row.process.pid).collect();
+        assert!(
+            pids.contains(&10),
+            "depth-1 row is visible under an open root"
+        );
+        assert!(!pids.contains(&11), "depth-2 row must be collapsed");
+        // The subtree total is still honest even when the row is hidden.
+        let shell = rows.iter().find(|row| row.process.pid == 10).unwrap();
+        assert_eq!(shell.subtree_rss_kb, 350);
+    }
+
+    #[test]
+    fn tree_search_opens_the_path_to_a_match() {
+        let procs = sample_tree();
+        // Nothing is open, yet "editor" must be reachable.
+        let (rows, _) = tree_rows(&procs, &|_, _| false, "editor", Scope::All, 1000, 100);
+        let pids: Vec<u32> = rows.iter().map(|row| row.process.pid).collect();
+        assert!(pids.contains(&11), "matches must be shown: {pids:?}");
+        assert!(pids.contains(&10), "and so must its parent: {pids:?}");
+        assert!(pids.contains(&1), "and the root above that: {pids:?}");
+        // A non-matching branch stays out.
+        assert!(!pids.contains(&20), "unrelated branch: {pids:?}");
+    }
+
+    #[test]
+    fn tree_respects_the_scope_filter() {
+        let procs = sample_tree();
+        let (rows, _) = tree_rows(&procs, &|_, _| true, "", Scope::Mine, 1000, 100);
+        let pids: Vec<u32> = rows.iter().map(|row| row.process.pid).collect();
+        assert!(pids.contains(&11));
+        assert!(!pids.contains(&20), "other user's daemon: {pids:?}");
+    }
+
+    #[test]
+    fn tree_survives_a_parent_cycle() {
+        // A recycled pid can make a↔b look like each other's parent.
+        let procs = vec![proc(5, 6, "a", 1., 10, 1000), proc(6, 5, "b", 1., 10, 1000)];
+        let (rows, _) = tree_rows(&procs, &|_, _| true, "", Scope::All, 1000, 100);
+        assert_eq!(rows.len(), 2, "a cycle must not duplicate or hang");
+    }
+
+    #[test]
+    fn tree_reports_rows_it_could_not_draw() {
+        let procs = sample_tree();
+        let (rows, stats) = tree_rows(&procs, &|_, _| true, "", Scope::All, 1000, 2);
+        assert_eq!(rows.len(), 2);
+        assert!(stats.truncated > 0, "truncation has to be visible");
+    }
+
+    fn grouped(name: &str, cgroup: &str, cpu: f32, rss_kb: u64) -> Process {
+        let mut p = proc(1, 0, name, cpu, rss_kb, 1000);
+        p.cgroup = cgroup.to_string();
+        p
+    }
+
+    #[test]
+    fn slice_tree_aggregates_every_level() {
+        let procs = [
+            grouped(
+                "a",
+                "/user.slice/user-1000.slice/user@1000.service/app.slice/x.scope",
+                2.,
+                100,
+            ),
+            grouped(
+                "b",
+                "/user.slice/user-1000.slice/user@1000.service/app.slice/x.scope",
+                3.,
+                200,
+            ),
+            grouped(
+                "c",
+                "/user.slice/user-1000.slice/user@1000.service/core.scope",
+                1.,
+                50,
+            ),
+            grouped("d", "/system.slice/sshd.service", 4., 400),
+        ];
+        let refs: Vec<&Process> = procs.iter().collect();
+        let (nodes, ungrouped) = slice_tree(&refs);
+        assert_eq!(ungrouped, 0, "every process here has a cgroup");
+        let find = |path: &str| nodes.iter().find(|n| n.path == path).expect(path);
+
+        assert_eq!(find("/user.slice").count, 3);
+        assert!((find("/user.slice").cpu - 6.).abs() < 0.01);
+        assert_eq!(find("/user.slice").rss_kb, 350);
+        assert_eq!(find("/system.slice").count, 1);
+        assert_eq!(nodes[0].count, 4, "root must total every process");
+        // x.scope holds two of them.
+        let scope = find("/user.slice/user-1000.slice/user@1000.service/app.slice/x.scope");
+        assert_eq!(scope.direct.len(), 2);
+        assert_eq!(scope.children.len(), 0);
+    }
+
+    #[test]
+    fn slice_tree_names_the_root_cgroup_instead_of_hiding_it() {
+        // `/` is where every kernel thread lives. It is a real cgroup, so the
+        // view must bucket it rather than call it ungrouped.
+        let procs = [grouped("kworker/0:1", "/", 1., 0)];
+        let refs: Vec<&Process> = procs.iter().collect();
+        let (nodes, ungrouped) = slice_tree(&refs);
+        assert_eq!(ungrouped, 0);
+        assert_eq!(nodes[0].children.len(), 1);
+        let bucket = &nodes[nodes[0].children[0]];
+        assert_eq!(bucket.name, ROOT_CGROUP_NAME);
+        assert_eq!(bucket.count, 1);
+    }
+
+    #[test]
+    fn slice_tree_survives_missing_cgroup() {
+        let procs = [grouped("a", "", 1., 10)];
+        let refs: Vec<&Process> = procs.iter().collect();
+        let (nodes, ungrouped) = slice_tree(&refs);
+        // No path means no bucket, not a made-up "other" slice. The process is
+        // still counted in the root total and reported as ungrouped.
+        assert!(nodes[0].children.is_empty());
+        assert_eq!(nodes[0].count, 1);
+        assert_eq!(ungrouped, 1);
+    }
+
+    #[test]
+    fn slice_sort_puts_the_heaviest_first() {
+        let procs = [
+            grouped("a", "/system.slice/light.service", 1., 10),
+            grouped("b", "/system.slice/heavy.service", 9., 90),
+        ];
+        let refs: Vec<&Process> = procs.iter().collect();
+        let (mut nodes, _) = slice_tree(&refs);
+        sort_slices(&mut nodes, SortKey::Cpu);
+        let first = nodes[0].children[0];
+        assert_eq!(
+            nodes[first].name, "system.slice",
+            "there is only one top slice here"
+        );
+        let kids: Vec<&str> = nodes[first]
+            .children
+            .iter()
+            .map(|ix| nodes[*ix].name.as_str())
+            .collect();
+        assert_eq!(kids, vec!["heavy.service", "light.service"]);
     }
 
     #[test]

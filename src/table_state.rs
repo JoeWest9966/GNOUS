@@ -566,6 +566,8 @@ mod tests {
             rss_shmem_kb: 0,
             swap_kb: 0,
             vm_peak_kb: mem,
+            cgroup: String::new(),
+            kernel: false,
             history: Vec::new(),
         }
     }
