@@ -85,6 +85,10 @@ const MANIFESTS: &[(&str, &str)] = &[
         "extensions/displays/manifest.toml",
         include_str!("../extensions/displays/manifest.toml"),
     ),
+    (
+        "extensions/termfont/manifest.toml",
+        include_str!("../extensions/termfont/manifest.toml"),
+    ),
 ];
 
 static CACHE: OnceLock<Vec<Manifest>> = OnceLock::new();
@@ -190,6 +194,14 @@ mod tests {
         );
         assert_eq!(proxy.views.len(), 1);
         assert_eq!(proxy.views[0].id, "proxy");
+        let termfont = all.iter().find(|m| m.id == "termfont").expect("termfont");
+        assert_eq!(termfont.name, "终端字体");
+        assert_eq!(
+            termfont.nav.as_ref().map(|n| n.section.as_str()),
+            Some("extensions")
+        );
+        assert_eq!(termfont.views.len(), 1);
+        assert_eq!(termfont.views[0].id, "termfont");
     }
 
     #[test]
@@ -198,11 +210,12 @@ mod tests {
         assert_eq!(overview.len(), 5);
         assert!(views_for("appearance").is_empty());
         let extensions = views_for("extensions");
-        assert_eq!(extensions.len(), 4);
+        assert_eq!(extensions.len(), 5);
         assert_eq!(extensions[0].1.id, "fixes");
         assert_eq!(extensions[1].1.id, "align");
         assert_eq!(extensions[2].1.id, "proxy");
         assert_eq!(extensions[3].1.id, "displays");
+        assert_eq!(extensions[4].1.id, "termfont");
         assert_eq!(views_for("startup").len(), 4);
         // The sandbox console owns its own rail section, so its eight views are
         // no longer counted against Extensions.

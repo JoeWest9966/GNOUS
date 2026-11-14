@@ -14,6 +14,7 @@ mod startup;
 mod sys;
 mod table_prefs;
 mod table_state;
+mod termfont;
 mod theme;
 mod toggles;
 
@@ -211,6 +212,8 @@ pub(crate) struct App {
     proxy: proxy_tools::State,
     /// State of the displays console (mutter layout).
     displays: displays::State,
+    /// State of the termfont console (terminal + FinalShell font sizes).
+    termfont: termfont::State,
     /// Startup layouts: pages, splits and the boot policy (JSON-backed).
     startup: startup::State,
     /// Snapshot + action log of the openshell panel.
@@ -373,6 +376,7 @@ impl App {
             root_align: root_align::State::new(),
             proxy: proxy_tools::State::new(),
             displays: displays::State::new(),
+            termfont: termfont::State::new(),
             startup: startup::State::load(),
             openshell: openshell::State::new(),
             selected: None,
@@ -561,6 +565,7 @@ impl App {
         self.root_align.armed = None;
         self.openshell.armed = None;
         self.displays.armed = None;
+        self.termfont.armed = None;
         // Leaving the process plugin puts the change detector to sleep; coming
         // back establishes a fresh baseline in `go_page`.
         self.table.prime(&self.proc.processes);
@@ -573,6 +578,9 @@ impl App {
         }
         if page.plugin == "displays" {
             self.enter_displays_page(cx);
+        }
+        if page.plugin == "termfont" {
+            self.enter_termfont_page(cx);
         }
         if page.plugin == "root-align" {
             self.enter_root_align_page(cx);
@@ -592,6 +600,7 @@ impl App {
         self.root_align.armed = None;
         self.openshell.armed = None;
         self.displays.armed = None;
+        self.termfont.armed = None;
         self.close_process_overlays();
         if page.plugin == "processes" && !was_processes {
             // Sampling stops while away from the plugin. Re-entering after a
@@ -603,6 +612,9 @@ impl App {
         }
         if page.plugin == "displays" {
             self.enter_displays_page(cx);
+        }
+        if page.plugin == "termfont" {
+            self.enter_termfont_page(cx);
         }
         if page.plugin == "root-align" {
             self.enter_root_align_page(cx);
@@ -816,6 +828,114 @@ impl App {
     pub(crate) fn select_displays_face(&mut self, face: usize, cx: &mut Context<Self>) {
         self.displays.face = face;
         cx.notify();
+    }
+
+    /// First entry into the termfont page runs one read-only status probe.
+    fn enter_termfont_page(&mut self, cx: &mut Context<Self>) {
+        if !self.termfont.has_status() && !self.termfont.busy {
+            self.run_termfont(termfont::Op::Status, cx);
+        }
+    }
+
+    /// Run one termfont op. Everything except STATUS/DOCTOR needs a second
+    /// click; RESTART additionally kills running SSH sessions, so it stays a
+    /// separate button that nobody presses by accident.
+    pub(crate) fn run_termfont(&mut self, op: termfont::Op, cx: &mut Context<Self>) {
+        self.run_termfont_inner(op, true, cx);
+    }
+
+    /// `switch_tab` 为假时只刷新 facts，不把用户从正在看的标签踢走——步进目标值
+    /// 属于"顺手重读一次"，不该换页。
+    fn run_termfont_inner(&mut self, op: termfont::Op, switch_tab: bool, cx: &mut Context<Self>) {
+        eprintln!(
+            "DBG run_termfont {:?} armed={:?} busy={}",
+            op, self.termfont.armed, self.termfont.busy
+        );
+        if self.termfont.busy {
+            return;
+        }
+        if op.is_mutating() && self.termfont.armed != Some(op) {
+            self.termfont.armed = Some(op);
+            cx.notify();
+            return;
+        }
+        self.termfont.armed = None;
+        self.termfont.busy = true;
+        let weak = cx.entity().downgrade();
+        let task = cx
+            .background_executor()
+            .spawn(async move { termfont::run(op) });
+        cx.spawn(async move |_, cx| {
+            let outcome = task.await;
+            // The backend re-reads the real values itself, so the outcome's
+            // facts are already the post-action truth.
+            let _ = weak.update(cx, |app: &mut App, cx| {
+                app.termfont.busy = false;
+                app.termfont.absorb(outcome, switch_tab);
+                cx.notify();
+            });
+            cx.refresh();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub(crate) fn select_termfont_tab(&mut self, tab: termfont::Tab, cx: &mut Context<Self>) {
+        self.termfont.tab = tab;
+        // A tab with no result would read as "broken"; run its op instead, but
+        // only for the read-only ones — everything else needs an armed click.
+        if self.termfont.outcome(tab).is_none() && !self.termfont.busy && !tab.op().is_mutating() {
+            self.run_termfont(tab.op(), cx);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn select_termfont_face(&mut self, face: usize, cx: &mut Context<Self>) {
+        self.termfont.face = face;
+        cx.notify();
+    }
+
+    /// 步进目标值：只写 `~/.config/gnous/termfont.json`，不动机器。
+    pub(crate) fn step_termfont(&mut self, term_steps: i32, fs_steps: i32, cx: &mut Context<Self>) {
+        let current = self
+            .termfont
+            .facts
+            .as_ref()
+            .map(|facts| termfont::config::Targets {
+                term_pt: facts.targets.term_pt,
+                fs_px: facts.targets.fs_px,
+                auto_convert: facts.targets.auto_convert,
+            })
+            .unwrap_or_default();
+        let next = current.stepped(term_steps, fs_steps);
+        match termfont::config::save(&next) {
+            Ok(_) => self.termfont.edit_error = None,
+            Err(error) => self.termfont.edit_error = Some(error),
+        }
+        // 目标值变了，"一致/不一致"的结论也变了，所以重新读一次状态。
+        self.run_termfont_inner(termfont::Op::Status, false, cx);
+    }
+
+    pub(crate) fn toggle_termfont_convert(&mut self, cx: &mut Context<Self>) {
+        let current = self
+            .termfont
+            .facts
+            .as_ref()
+            .map(|facts| termfont::config::Targets {
+                term_pt: facts.targets.term_pt,
+                fs_px: facts.targets.fs_px,
+                auto_convert: facts.targets.auto_convert,
+            })
+            .unwrap_or_default();
+        let next = termfont::config::Targets {
+            auto_convert: !current.auto_convert,
+            ..current
+        };
+        match termfont::config::save(&next) {
+            Ok(_) => self.termfont.edit_error = None,
+            Err(error) => self.termfont.edit_error = Some(error),
+        }
+        self.run_termfont(termfont::Op::Status, cx);
     }
 
     /// Run one root-align action. Mutating actions need a second click; after
@@ -1765,6 +1885,7 @@ impl Render for App {
                             root_align: &self.root_align,
                             proxy: &self.proxy,
                             displays: &self.displays,
+                            termfont: &self.termfont,
                             startup: &self.startup,
                             openshell: &self.openshell,
                             content_led: &self.content_led,
@@ -2233,6 +2354,8 @@ pub(crate) struct Overview<'a> {
     pub(crate) proxy: &'a proxy_tools::State,
     /// Mutters' display layout console.
     pub(crate) displays: &'a displays::State,
+    /// Terminal / FinalShell font-size console.
+    pub(crate) termfont: &'a termfont::State,
     /// Startup layouts model + probes.
     pub(crate) startup: &'a startup::State,
     /// Snapshot and action log of the openshell panel.
@@ -2253,6 +2376,7 @@ fn content(overview: &Overview, cx: &mut Context<App>) -> impl IntoElement {
         ("root-align", _) => pages::root_align::body(overview, &weak),
         ("proxy-tools", _) => pages::proxy_tools::body(overview, &weak),
         ("displays", _) => pages::displays::body(overview, &weak),
+        ("termfont", _) => pages::termfont::body(overview, &weak),
         ("startup-layouts", view) => pages::startup_layouts::body(view, overview, &weak),
         ("openshell", view) => pages::openshell::body(view, overview, &weak),
         (_, label) => placeholder(label),

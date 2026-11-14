@@ -85,6 +85,8 @@
   `displays` 接管外接屏 / 内置屏的布局：状态取自 mutter 的 `GetCurrentState`，
   APPLY 先 `METHOD_VERIFY` 校验再持久化、落地后重读确认；老脚本的
   `display-mode.timer` 只读，交棒命令只打印。
+  `termfont` 统一调 GNOME 终端（pt）与 FinalShell（px）的字号：读真实当前值、
+  写前备份、改完重读确认，重启 FinalShell 这种会断 SSH 的动作单独标红。
   `proxy-tools` 把本机代理中继（原本是 `/home/root/GNOME` 里的 python + bash 脚本）
   重写成自带的标准库 Rust 中继，并给出只读诊断台：旧单元只读、危险 systemd 动词
   在接口层不存在、交棒命令只打印不执行。
@@ -159,7 +161,8 @@ src/
 ├── root_align.rs # root-align 页面状态与内建后端适配
 ├── proxy_tools/ # 代理工具内建后端：guard 闸门 / std 中继 / 只读诊断 / 配置
 ├── displays/  # 多屏幕内建后端：std 写的 D-Bus 客户端 / mutter 布局 / 配置 / 单元
-├── pages/     # 页面级扩展渲染器：processes / gnome_fixes / root_align / proxy_tools / displays
+├── termfont/  # 终端字体内建后端：gsettings 允许清单 / FinalShell 定点替换 / 配置
+├── pages/     # 页面级扩展渲染器：processes / gnome_fixes / root_align / proxy_tools / displays / termfont
 ├── toggles.rs # 右侧快捷开关：gsettings bool/choice 与外部命令，缺失即置灰
 ├── theme.rs   # 设计 token（颜色 / 字体 / 字距 / 行高）与文本辅助函数
 └── icons.rs   # 内联 SVG 线性图标（stroke 1.3，与 demo 完全一致）

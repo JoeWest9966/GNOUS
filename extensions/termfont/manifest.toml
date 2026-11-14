@@ -1,0 +1,16 @@
+id = "termfont"
+name = "终端字体"
+summary = "统一调 GNOME 终端（pt）与 FinalShell（px）的字号：读真实当前值，写前备份，改完重读确认"
+version = "0.1.0"
+capabilities = ["page"]
+icon = "type"
+
+# 页面级扩展：挂在「扩展」分区，排在 Display 之后
+[nav]
+label = "Type"
+section = "extensions"
+order = 60
+
+[[views]]
+id = "termfont"
+label = "Type"

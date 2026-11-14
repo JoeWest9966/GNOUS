@@ -11,3 +11,4 @@ pub mod processes;
 pub mod proxy_tools;
 pub mod root_align;
 pub mod startup_layouts;
+pub mod termfont;
