@@ -1963,7 +1963,7 @@ dependencies = [
 
 [[package]]
 name = "gnous"
-version = "0.2.0-preview.5"
+version = "0.2.0-preview.6"
 dependencies = [
  "gpui-kit",
  "libc",

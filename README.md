@@ -117,7 +117,7 @@
   - 搜索（名称 / PID / cgroup 路径）+ 全部/我的/系统范围 + 按 CPU / 内存 / 进程数排序。
 
 
-当前版本：`0.2.0-preview.5`。Appearance / Devices / Power 分区与启动器仍是静态占位；
+当前版本：`0.2.0-preview.6`。Appearance / Devices / Power 分区与启动器仍是静态占位；
 剩余外部工具默认在 `/home/root/GNOME`，可用 `GNOUS_FIXES_ROOT` 覆盖；内建后端状态在
 `~/.local/state/gnous/fixes/`，可用 `GNOUS_STATE_HOME` 覆盖。发布记录见 `CHANGELOG.md`。
 

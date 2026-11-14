@@ -847,10 +847,6 @@ impl App {
     /// `switch_tab` 为假时只刷新 facts，不把用户从正在看的标签踢走——步进目标值
     /// 属于"顺手重读一次"，不该换页。
     fn run_termfont_inner(&mut self, op: termfont::Op, switch_tab: bool, cx: &mut Context<Self>) {
-        eprintln!(
-            "DBG run_termfont {:?} armed={:?} busy={}",
-            op, self.termfont.armed, self.termfont.busy
-        );
         if self.termfont.busy {
             return;
         }

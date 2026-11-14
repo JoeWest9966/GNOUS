@@ -5,6 +5,75 @@
 - `0.x.y-preview.N`：开发预览版。可在本机安装、验证，但仍有占位页与未完成能力。
 - `0.x.y`：功能稳定后的正式小版本。
 
+## [0.2.0-preview.6] - 2026-11-14
+
+`代理工具` / `多屏幕` / `终端字体` 三套外部脚本全部迁进 GNOUS 自带的 Rust 后端，
+同时并入了 Memory、Tree、Groups 三页重做。
+
+### 代理工具（页面级扩展 `proxy-tools`）
+
+- 只读诊断台：结论条、4 个指标、左列三面（中继 / 绕行 / 控制面）、六个 op 的原样
+  stdout、底部安全 pill。`STATUS` / `DOCTOR` / `HANDOVER` 只读，`APPLY` / `REVERT`
+  二次确认。
+- `src/proxy_tools/guard.rs` 是代码级闸门：受保护端口（`31001` 等）与旧单元
+  `j1900-proxy.service` 只读，唯一可写的单元是 `gnous-proxy-relay.service`；
+  禁止任何 systemd 状态动词；`gsettings` 只 `get`；静态允许清单之外一律拒绝。
+- 中继用 `std::net` 自写（`relay.rs`），替代 `jproxy.py`：线程 + 半关闭 + 空闲超时 +
+  上游重试，被拒绑受保护端口时在 syscall 之前就返回。
+- `no_proxy.rs` 按真实网卡生成精确 `/24` 列表（Node/Bun 不认 CIDR）并报告缺口；
+  `units.rs` / `config.rs` 只写 GNOUS 自己的单元与 `~/.config/gnous/proxy-tools.json`，
+  **从不 enable / start / reload**；交棒命令只打印（含后悔药）。
+- 仓库新增提交前安全闸门 `extensions/proxy-tools/dev/check-safety.sh`
+  （扫 diff 与未跟踪文件里的禁止字面量，命中即 `exit 1`）与配套
+  `DEV-SAFETY.md` / `INVESTIGATION.md`。
+
+### 多屏幕（页面级扩展 `displays`）
+
+- `src/displays/dbus.rs`：只依赖 std 的 D-Bus 客户端（`EXTERNAL` 认证、`Hello`、
+  按签名编解码），单测覆盖真机踩过的四个坑：必须先 `Hello`、变体签名是 `g`、
+  头字段 PATH 必须是 `o`、数组长度不含最后元素尾部填充。
+- `APPLY` 的顺序固定为 **verify → 持久化 → 重读确认**：先 `METHOD_VERIFY`，
+  被 mutter 拒绝就绝不落地。真机验证过这条：把两块不同分辨率的屏塞进同一个
+  logical monitor 时 mutter 回 `InvalidArgs`，面板原样显示、屏幕一点没动。
+- 每块屏一个 logical monitor 横向排开（老脚本的 `both` 模式因此从来没成功过）。
+- 老脚本 `display-mode.timer` 只读，GNOUS 只写自己的 `gnous-display.*`，
+  交棒命令只打印。
+
+### 终端字体（页面级扩展 `termfont`）
+
+- 替代 `/home/root/GNOME/终端字体` 那只 CLI：`status` / `doctor` 只读，
+  `term` / `fs` / `all` / `follow` / `restart` 全部二次确认，改完重读真实值再出结论。
+- `src/termfont/exec.rs` 是唯一执行缝，只允许 `gsettings`，并按 schema+键 收窄到终端
+  profile 的 `font` / `use-system-font`；系统等宽字体与 profile 列表只读。
+- FinalShell 的 `config.json` 只做定点文本替换 `"font_size":N`（里面有加密字段，
+  不能重新序列化），写前备份 `config.json.bak`，值不变既不写也不覆盖备份。
+- 认进程只看 `/proc/<pid>/cmdline` 的 **argv[0]**——用整条命令行子串匹配会误杀，
+  开发中真的把一条只是提到该路径的 bash 命令 SIGTERM 了，现有回归测试守着。
+- `RESTART` 单独标红（会断 SSH），且永远不由 `FS` / `ALL` 自动触发；页面底部的目标
+  步进器只改 `~/.config/gnous/termfont.json`，不动机器。
+
+### Memory 页重做
+
+- 内存地图：方块面积 = 常驻内存，取全量按 RSS 排序的前 40 个进程，不再只画前 N 个
+  抽样；选中进程按需读 `/proc/<pid>/smaps_rollup`，给出 **PSS / USS / 共享页 /
+  Swap PSS**，而不是拿 RSS 冒充独占内存。
+
+### Tree / Groups 重做
+
+- Tree：父子关系来自 `/proc/<pid>/stat` 的 `ppid`，从 PID 1 出发做真实 DFS。
+- Groups：分组来自 `/proc/<pid>/cgroup`，按 systemd 真实层级成桶；`/` 单独成桶并
+  如实命名。修掉一个真实性能 bug：原来在渲染循环里对每个进程读一次 cgroup 文件，
+  现在走带缓存的采样。
+
+### 工程
+
+- 新增 `src/proxy_tools/*`、`src/displays/*`、`src/termfont/*` 与对应
+  `src/pages/{proxy_tools,displays,termfont}.rs`、`extensions/*/manifest.toml`；
+  Extensions 分区现在是 INSTALLED / FIXES / ALIGN / PROXY / DISPLAY / TYPE 六个入口。
+- `cargo build` 零警告、`cargo test` 192 项通过、`cargo fmt --check` 干净。
+- 三个扩展的 manifest 都写在 `extensions/<id>/manifest.toml`，由 `src/registry.rs`
+  编译期注册，核心代码里没有硬编码扩展名。
+
 ## [0.2.0-preview.5] - 2026-11-13
 
 `clipfix` 与 `rootdesk` 两套外部脚本逻辑内嵌为 GNOUS 自带的 Rust 后端，
